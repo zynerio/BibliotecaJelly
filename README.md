@@ -4,6 +4,8 @@ Aplicación Android nativa desarrollada en Kotlin/Jetpack Compose que actúa com
 
 ## Changelog interno
 
+![img1confi](https://github.com/user-attachments/assets/9be305ab-ad2f-40a4-8c22-25e6c06c0fc9)
+
 ### v1.3
 
 - Sincronización de películas reforzada para evitar saltos de fase y conservar metadatos clave.
@@ -75,6 +77,8 @@ Aplicación Android nativa desarrollada en Kotlin/Jetpack Compose que actúa com
 - **Sincronización en segundo plano**: WorkManager
 - **Cifrado de credenciales**: EncryptedSharedPreferences (androidx.security.crypto)
 - **Imágenes**: Glide con caché local
+
+<img width="1354" height="838" alt="img2ptablet" src="https://github.com/user-attachments/assets/7e880645-8f69-4189-8e89-2f573649b9cf" />
 
 ### Capas principales
 
