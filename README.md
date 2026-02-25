@@ -1,10 +1,31 @@
 # Biblioteca Jelly (Cliente offline para Jellyfin)
 
-Aplicación Android nativa desarrollada en Kotlin/Jetpack Compose que actúa como biblioteca de consulta offline para un servidor Jellyfin. Importa los metadatos de películas y series, los almacena en una base de datos local y permite consultarlos sin conexión.
+Aplicación Android nativa desarrollada en Kotlin/Jetpack Compose que actúa como biblioteca de consulta offline 
+para un servidor Jellyfin. 
+Importa los metadatos de películas y series, los almacena en una base de datos local y permite consultarlos sin conexión.
 
 ## Changelog interno
 
+### v1.4
+
 ![img1confi](https://github.com/user-attachments/assets/9be305ab-ad2f-40a4-8c22-25e6c06c0fc9)
+
+
+- Sincronización diferenciada por modo:
+  - **Normal** (catálogo + detalles),
+  - **Rápida** (solo catálogo),
+  - **Solo detalles** (sin refrescar catálogo).
+- Historial de sincronizaciones:
+  - acceso desde opciones,
+  - acceso rápido pulsando “Última actualización”.
+- Configuración reorganizada por pestañas (`Servidor`, `Sincronización`, `Datos`).
+- Nuevo botón **Probar conexión** con popup de resultado.
+- Filtros mejorados:
+  - combinación de múltiples géneros,
+  - combinación de múltiples detalles técnicos,
+  - texto actualizado de acción a **“Limpiar detalles”**.
+- Corrección de orden **“Últimos añadidos”** en series usando `DateCreated`.
+- Versión de aplicación actualizada a `1.4` (`versionCode = 4`).
 
 ### v1.3
 
@@ -31,11 +52,20 @@ Aplicación Android nativa desarrollada en Kotlin/Jetpack Compose que actúa com
 
 ## Estado
 
-- Versión actual: **1.3**
+- Versión actual: **1.4**
 - Android mínimo: **7.0 (API 24)**
 - Stack principal: **Kotlin + Jetpack Compose + Material 3**
 
-## Funcionalidades destacadas (v1.3)
+## Funcionalidades destacadas (v1.4)
+
+### Novedades de la versión
+
+- Modos de sincronización separados (normal / rápida / solo detalles).
+- Historial de actualizaciones visible desde opciones y desde la fecha de última actualización.
+- Botón “Probar conexión” en configuración.
+- Filtros combinables por géneros y detalles técnicos.
+
+### Base consolidada (v1.3)
 
 ### Biblioteca y orden
 
