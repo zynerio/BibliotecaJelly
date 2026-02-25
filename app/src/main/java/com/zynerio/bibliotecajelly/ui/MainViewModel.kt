@@ -72,7 +72,8 @@ data class SyncUiState(
     val serverStatusText: String = "Servidor: sin comprobar",
     val isServerActive: Boolean = false,
     val lastSyncText: String? = null,
-    val lastError: String? = null
+    val lastError: String? = null,
+    val syncHistory: List<String> = emptyList()
 )
 
 data class LibraryUiState(
@@ -83,12 +84,10 @@ data class LibraryUiState(
     val seriesSortMode: LibrarySortMode = LibrarySortMode.Alphabetical,
     val showOnlyMovieFavorites: Boolean = false,
     val showOnlySeriesFavorites: Boolean = false,
-    val selectedMovieGenre: String? = null,
-    val selectedSeriesGenre: String? = null,
-    val selectedMovieTechnicalType: TechnicalFilterType? = null,
-    val selectedMovieTechnicalValue: String? = null,
-    val selectedSeriesTechnicalType: TechnicalFilterType? = null,
-    val selectedSeriesTechnicalValue: String? = null,
+    val selectedMovieGenres: Set<String> = emptySet(),
+    val selectedSeriesGenres: Set<String> = emptySet(),
+    val selectedMovieTechnicalFilters: Map<TechnicalFilterType, Set<String>> = emptyMap(),
+    val selectedSeriesTechnicalFilters: Map<TechnicalFilterType, Set<String>> = emptyMap(),
     val selectedSeriesTechnicalMatchedIds: Set<String>? = null
 )
 
@@ -198,7 +197,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         seriesSortMode = seriesSortMode
                     ),
                     sync = _uiState.value.sync.copy(
-                        lastSyncText = lastSync?.let { formatLastSync(it) }
+                        lastSyncText = lastSync?.let { formatLastSync(it) },
+                        syncHistory = repository.getSyncHistory()
                     )
                 )
 
@@ -312,13 +312,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(
             library = when (library.selectedTab) {
                 LibraryTab.Movies -> {
-                    val next = if (library.selectedMovieGenre == genre) null else genre
-                    library.copy(selectedMovieGenre = next)
+                    val next = library.selectedMovieGenres.toMutableSet().apply {
+                        if (any { it.equals(genre, ignoreCase = true) }) {
+                            removeAll { it.equals(genre, ignoreCase = true) }
+                        } else {
+                            add(genre)
+                        }
+                    }
+                    library.copy(selectedMovieGenres = next)
                 }
 
                 LibraryTab.Series -> {
-                    val next = if (library.selectedSeriesGenre == genre) null else genre
-                    library.copy(selectedSeriesGenre = next)
+                    val next = library.selectedSeriesGenres.toMutableSet().apply {
+                        if (any { it.equals(genre, ignoreCase = true) }) {
+                            removeAll { it.equals(genre, ignoreCase = true) }
+                        } else {
+                            add(genre)
+                        }
+                    }
+                    library.copy(selectedSeriesGenres = next)
                 }
             }
         )
@@ -328,8 +340,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val library = _uiState.value.library
         _uiState.value = _uiState.value.copy(
             library = when (library.selectedTab) {
-                LibraryTab.Movies -> library.copy(selectedMovieGenre = null)
-                LibraryTab.Series -> library.copy(selectedSeriesGenre = null)
+                LibraryTab.Movies -> library.copy(selectedMovieGenres = emptySet())
+                LibraryTab.Series -> library.copy(selectedSeriesGenres = emptySet())
             }
         )
     }
@@ -343,52 +355,50 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val library = _uiState.value.library
         when (library.selectedTab) {
             LibraryTab.Movies -> {
-                val isSame = library.selectedMovieTechnicalType == type &&
-                    library.selectedMovieTechnicalValue.equals(normalizedValue, ignoreCase = true)
-                _uiState.value = _uiState.value.copy(
-                    library = if (isSame) {
-                        library.copy(
-                            selectedMovieTechnicalType = null,
-                            selectedMovieTechnicalValue = null
-                        )
+                val currentValues = library.selectedMovieTechnicalFilters[type].orEmpty()
+                val nextValues = currentValues.toMutableSet().apply {
+                    if (any { it.equals(normalizedValue, ignoreCase = true) }) {
+                        removeAll { it.equals(normalizedValue, ignoreCase = true) }
                     } else {
-                        library.copy(
-                            selectedMovieTechnicalType = type,
-                            selectedMovieTechnicalValue = normalizedValue
-                        )
+                        add(normalizedValue)
                     }
+                }
+                val nextFilters = library.selectedMovieTechnicalFilters.toMutableMap().apply {
+                    if (nextValues.isEmpty()) {
+                        remove(type)
+                    } else {
+                        put(type, nextValues)
+                    }
+                }
+                _uiState.value = _uiState.value.copy(
+                    library = library.copy(selectedMovieTechnicalFilters = nextFilters)
                 )
             }
 
             LibraryTab.Series -> {
-                val isSame = library.selectedSeriesTechnicalType == type &&
-                    library.selectedSeriesTechnicalValue.equals(normalizedValue, ignoreCase = true)
-                if (isSame) {
+                val currentValues = library.selectedSeriesTechnicalFilters[type].orEmpty()
+                val nextValues = currentValues.toMutableSet().apply {
+                    if (any { it.equals(normalizedValue, ignoreCase = true) }) {
+                        removeAll { it.equals(normalizedValue, ignoreCase = true) }
+                    } else {
+                        add(normalizedValue)
+                    }
+                }
+                val nextFilters = library.selectedSeriesTechnicalFilters.toMutableMap().apply {
+                    if (nextValues.isEmpty()) {
+                        remove(type)
+                    } else {
+                        put(type, nextValues)
+                    }
+                }
+                viewModelScope.launch {
+                    val matchedIds = resolveSeriesTechnicalMatchedIds(nextFilters)
                     _uiState.value = _uiState.value.copy(
-                        library = library.copy(
-                            selectedSeriesTechnicalType = null,
-                            selectedSeriesTechnicalValue = null,
-                            selectedSeriesTechnicalMatchedIds = null
+                        library = _uiState.value.library.copy(
+                            selectedSeriesTechnicalFilters = nextFilters,
+                            selectedSeriesTechnicalMatchedIds = matchedIds
                         )
                     )
-                } else {
-                    viewModelScope.launch {
-                        val matchedIds = when (type) {
-                            TechnicalFilterType.Quality ->
-                                repository.getSeriesIdsBySeasonQuality(normalizedValue)
-                            TechnicalFilterType.Format ->
-                                repository.getSeriesIdsBySeasonFormat(normalizedValue)
-                            TechnicalFilterType.Resolution ->
-                                repository.getSeriesIdsBySeasonResolution(normalizedValue)
-                        }
-                        _uiState.value = _uiState.value.copy(
-                            library = _uiState.value.library.copy(
-                                selectedSeriesTechnicalType = type,
-                                selectedSeriesTechnicalValue = normalizedValue,
-                                selectedSeriesTechnicalMatchedIds = matchedIds.toSet()
-                            )
-                        )
-                    }
                 }
             }
         }
@@ -459,13 +469,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(
             library = when (library.selectedTab) {
                 LibraryTab.Movies -> library.copy(
-                    selectedMovieTechnicalType = null,
-                    selectedMovieTechnicalValue = null
+                    selectedMovieTechnicalFilters = emptyMap()
                 )
 
                 LibraryTab.Series -> library.copy(
-                    selectedSeriesTechnicalType = null,
-                    selectedSeriesTechnicalValue = null,
+                    selectedSeriesTechnicalFilters = emptyMap(),
                     selectedSeriesTechnicalMatchedIds = null
                 )
             }
@@ -481,9 +489,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     library = library.copy(
                         searchQuery = "",
                         showOnlyMovieFavorites = false,
-                        selectedMovieGenre = null,
-                        selectedMovieTechnicalType = null,
-                        selectedMovieTechnicalValue = null
+                        selectedMovieGenres = emptySet(),
+                        selectedMovieTechnicalFilters = emptyMap()
                     )
                 )
             }
@@ -494,9 +501,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     library = library.copy(
                         searchQuery = "",
                         showOnlySeriesFavorites = false,
-                        selectedSeriesGenre = null,
-                        selectedSeriesTechnicalType = null,
-                        selectedSeriesTechnicalValue = null,
+                        selectedSeriesGenres = emptySet(),
+                        selectedSeriesTechnicalFilters = emptyMap(),
                         selectedSeriesTechnicalMatchedIds = null
                     )
                 )
@@ -514,12 +520,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 searchQuery = "",
                 showOnlyMovieFavorites = false,
                 showOnlySeriesFavorites = false,
-                selectedMovieGenre = null,
-                selectedSeriesGenre = null,
-                selectedMovieTechnicalType = null,
-                selectedMovieTechnicalValue = null,
-                selectedSeriesTechnicalType = null,
-                selectedSeriesTechnicalValue = null,
+                selectedMovieGenres = emptySet(),
+                selectedSeriesGenres = emptySet(),
+                selectedMovieTechnicalFilters = emptyMap(),
+                selectedSeriesTechnicalFilters = emptyMap(),
                 selectedSeriesTechnicalMatchedIds = null
             )
         )
@@ -660,6 +664,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         triggerFastSyncWithScope(SyncScope.Series)
     }
 
+    fun triggerDetailsSync() {
+        triggerDetailsSyncWithScope(SyncScope.All)
+    }
+
+    fun triggerDetailsMoviesSync() {
+        triggerDetailsSyncWithScope(SyncScope.Movies)
+    }
+
+    fun triggerDetailsSeriesSync() {
+        triggerDetailsSyncWithScope(SyncScope.Series)
+    }
+
     private fun triggerSyncWithScope(scope: SyncScope) {
         currentSyncJob?.cancel()
         currentSyncJob = viewModelScope.launch {
@@ -705,6 +721,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 val lastSync = repository.getLastSyncEpochMillis()
+                val syncHistory = repository.getSyncHistory()
 
                 _uiState.value = _uiState.value.copy(
                     sync = _uiState.value.sync.copy(
@@ -713,6 +730,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         isServerActive = true,
                         phaseText = "Sincronización completada",
                         lastSyncText = lastSync?.let { formatLastSync(it) },
+                        syncHistory = syncHistory,
                         lastError = when (result) {
                             SyncResult.Success -> null
                             is SyncResult.NetworkError -> result.message
@@ -763,12 +781,77 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
 
+                val lastSync = repository.getLastSyncEpochMillis()
+                val syncHistory = repository.getSyncHistory()
+
                 _uiState.value = _uiState.value.copy(
                     sync = _uiState.value.sync.copy(
                         isSyncing = false,
                         serverStatusText = "Servidor: activo",
                         isServerActive = true,
                         phaseText = "Sincronización completada",
+                        lastSyncText = lastSync?.let { formatLastSync(it) },
+                        syncHistory = syncHistory,
+                        lastError = when (result) {
+                            SyncResult.Success -> null
+                            is SyncResult.NetworkError -> result.message
+                            is SyncResult.UnknownError -> result.message
+                        }
+                    )
+                )
+            } catch (_: CancellationException) {
+                _uiState.value = _uiState.value.copy(
+                    sync = _uiState.value.sync.copy(
+                        isSyncing = false,
+                        phaseText = "Sincronización cancelada"
+                    )
+                )
+            } finally {
+                currentSyncJob = null
+            }
+        }
+    }
+
+    private fun triggerDetailsSyncWithScope(scope: SyncScope) {
+        currentSyncJob?.cancel()
+        currentSyncJob = viewModelScope.launch {
+            try {
+                if (!ensureServerAvailableBeforeSync()) {
+                    currentSyncJob = null
+                    return@launch
+                }
+
+                _uiState.value = _uiState.value.copy(
+                    sync = _uiState.value.sync.copy(
+                        isSyncing = true,
+                        processed = 0,
+                        total = 0,
+                        phaseText = "Sincronizando solo detalles",
+                        lastError = null
+                    )
+                )
+
+                val result = repository.syncDetailsOnly(scope) { processed, total, phase ->
+                    _uiState.value = _uiState.value.copy(
+                        sync = _uiState.value.sync.copy(
+                            isSyncing = true,
+                            processed = processed,
+                            total = total,
+                            phaseText = phase.toUiText()
+                        )
+                    )
+                }
+
+                val lastSync = repository.getLastSyncEpochMillis()
+                val syncHistory = repository.getSyncHistory()
+                _uiState.value = _uiState.value.copy(
+                    sync = _uiState.value.sync.copy(
+                        isSyncing = false,
+                        serverStatusText = "Servidor: activo",
+                        isServerActive = true,
+                        phaseText = "Sincronización completada",
+                        lastSyncText = lastSync?.let { formatLastSync(it) },
+                        syncHistory = syncHistory,
                         lastError = when (result) {
                             SyncResult.Success -> null
                             is SyncResult.NetworkError -> result.message
@@ -845,6 +928,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             val lastSync = repository.getLastSyncEpochMillis()
+            val syncHistory = repository.getSyncHistory()
 
             _uiState.value = _uiState.value.copy(
                 sync = _uiState.value.sync.copy(
@@ -853,6 +937,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     isServerActive = true,
                     phaseText = "Sincronización completada",
                     lastSyncText = lastSync?.let { formatLastSync(it) },
+                    syncHistory = syncHistory,
                     lastError = when (result) {
                         SyncResult.Success -> null
                         is SyncResult.NetworkError -> result.message
@@ -870,6 +955,77 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun formatLastSync(epochMillis: Long): String {
         val formatter = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
         return formatter.format(Date(epochMillis))
+    }
+
+    fun testConnection(onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch {
+            when (val status = repository.checkServerStatus()) {
+                ConnectionResult.Success -> {
+                    _uiState.value = _uiState.value.copy(
+                        sync = _uiState.value.sync.copy(
+                            serverStatusText = "Servidor: activo",
+                            isServerActive = true,
+                            lastError = null
+                        )
+                    )
+                    onResult(true, "Conexión correcta con el servidor")
+                }
+
+                is ConnectionResult.NetworkError -> {
+                    _uiState.value = _uiState.value.copy(
+                        sync = _uiState.value.sync.copy(
+                            serverStatusText = "Servidor: inactivo",
+                            isServerActive = false,
+                            lastError = status.message
+                        )
+                    )
+                    onResult(false, status.message)
+                }
+
+                is ConnectionResult.AuthFailure -> {
+                    _uiState.value = _uiState.value.copy(
+                        sync = _uiState.value.sync.copy(
+                            serverStatusText = "Servidor: configuración incompleta",
+                            isServerActive = false,
+                            lastError = status.message
+                        )
+                    )
+                    onResult(false, status.message)
+                }
+
+                is ConnectionResult.UnknownError -> {
+                    _uiState.value = _uiState.value.copy(
+                        sync = _uiState.value.sync.copy(
+                            serverStatusText = "Servidor: estado desconocido",
+                            isServerActive = false,
+                            lastError = status.message
+                        )
+                    )
+                    onResult(false, status.message)
+                }
+            }
+        }
+    }
+
+    private suspend fun resolveSeriesTechnicalMatchedIds(
+        filters: Map<TechnicalFilterType, Set<String>>
+    ): Set<String>? {
+        if (filters.isEmpty()) return null
+
+        val perFilterMatches = mutableListOf<Set<String>>()
+        filters.forEach { (type, values) ->
+            values.forEach { value ->
+                val matched = when (type) {
+                    TechnicalFilterType.Quality -> repository.getSeriesIdsBySeasonQuality(value)
+                    TechnicalFilterType.Format -> repository.getSeriesIdsBySeasonFormat(value)
+                    TechnicalFilterType.Resolution -> repository.getSeriesIdsBySeasonResolution(value)
+                }
+                perFilterMatches += matched.toSet()
+            }
+        }
+
+        if (perFilterMatches.isEmpty()) return null
+        return perFilterMatches.reduce { acc, set -> acc.intersect(set) }
     }
 
     private fun refreshDatabaseSize() {

@@ -189,6 +189,9 @@ interface MovieDao {
     @Query("SELECT * FROM movies WHERE id IN (:ids)")
     suspend fun getMoviesByIds(ids: List<String>): List<MovieEntity>
 
+    @Query("SELECT id FROM movies")
+    suspend fun getAllMovieIds(): List<String>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(movies: List<MovieEntity>)
 
@@ -213,6 +216,9 @@ interface SeriesDao {
 
     @Query("SELECT * FROM series WHERE id = :seriesId LIMIT 1")
     suspend fun getSeriesById(seriesId: String): SeriesEntity?
+
+    @Query("SELECT id FROM series")
+    suspend fun getAllSeriesIds(): List<String>
 
     @Upsert
     suspend fun upsertSeries(series: List<SeriesEntity>)

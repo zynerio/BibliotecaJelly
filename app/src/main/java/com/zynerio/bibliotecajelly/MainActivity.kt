@@ -56,6 +56,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -147,6 +148,7 @@ fun BibliotecaJellyApp(viewModel: MainViewModel) {
                 onListDisplayModeChanged = viewModel::onListDisplayModeChanged,
                 onDownloadPostersOfflineChanged = viewModel::onDownloadPostersOfflineChanged,
                 onClearLocalData = viewModel::clearLocalData,
+                onTestConnection = viewModel::testConnection,
                 onSaveAndValidate = viewModel::saveAndValidateConfig,
                 onCancel = viewModel::cancelConfigChanges,
                 modifier = Modifier.padding(innerPadding)
@@ -166,6 +168,9 @@ fun BibliotecaJellyApp(viewModel: MainViewModel) {
                 onSyncFastAll = viewModel::triggerFastSync,
                 onSyncFastMovies = viewModel::triggerFastMoviesSync,
                 onSyncFastSeries = viewModel::triggerFastSeriesSync,
+                onSyncDetailsAll = viewModel::triggerDetailsSync,
+                onSyncDetailsMovies = viewModel::triggerDetailsMoviesSync,
+                onSyncDetailsSeries = viewModel::triggerDetailsSeriesSync,
                 onCancelSync = viewModel::cancelSync,
                 onOpenConfig = viewModel::openConfigScreen,
                 onGenreSelected = viewModel::onGenreSelected,
@@ -204,6 +209,7 @@ fun ConfigScreen(
     onListDisplayModeChanged: (ListDisplayMode) -> Unit,
     onDownloadPostersOfflineChanged: (Boolean) -> Unit,
     onClearLocalData: (ClearDataScope) -> Unit,
+    onTestConnection: ((Boolean, String) -> Unit) -> Unit,
     onSaveAndValidate: () -> Unit,
     onCancel: () -> Unit,
     modifier: Modifier = Modifier
@@ -223,6 +229,11 @@ fun ConfigScreen(
     val clearScope = remember { mutableStateOf(ClearDataScope.All) }
     val showClearSuccess = remember { mutableStateOf(false) }
     val clearSuccessText = remember { mutableStateOf("") }
+    val optionsTabIndex = remember { mutableIntStateOf(0) }
+    val showConnectionDialog = remember { mutableStateOf(false) }
+    val connectionDialogTitle = remember { mutableStateOf("") }
+    val connectionDialogMessage = remember { mutableStateOf("") }
+    val showSyncHistoryDialog = remember { mutableStateOf(false) }
 
     LaunchedEffect(showClearSuccess.value) {
         if (showClearSuccess.value) {
@@ -248,130 +259,185 @@ fun ConfigScreen(
                 fontWeight = FontWeight.Bold
             )
 
-            TextField(
-                value = config.serverAddress,
-                onValueChange = onServerChanged,
-                label = { Text("Dirección del servidor (IP o dominio)") },
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            TextField(
-                value = config.port,
-                onValueChange = onPortChanged,
-                label = { Text("Puerto") },
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            TextField(
-                value = config.username,
-                onValueChange = onUsernameChanged,
-                label = { Text("Usuario") },
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            TextField(
-                value = config.password,
-                onValueChange = onPasswordChanged,
-                label = { Text("Contraseña") },
-                visualTransformation = PasswordVisualTransformation(),
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            TextField(
-                value = config.apiKey,
-                onValueChange = onApiKeyChanged,
-                label = { Text("API key (opcional)") },
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Text(
-                text = "Sincronización automática",
-                style = MaterialTheme.typography.titleMedium
-            )
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                androidx.compose.material3.RadioButton(
-                    selected = config.autoSyncMode == com.zynerio.bibliotecajelly.data.AutoSyncMode.OnStart,
-                    onClick = { onAutoSyncModeChanged(com.zynerio.bibliotecajelly.data.AutoSyncMode.OnStart) }
+            TabRow(selectedTabIndex = optionsTabIndex.intValue) {
+                Tab(
+                    selected = optionsTabIndex.intValue == 0,
+                    onClick = { optionsTabIndex.intValue = 0 },
+                    text = { Text("Servidor") }
                 )
-                Text("Al iniciar la aplicación")
+                Tab(
+                    selected = optionsTabIndex.intValue == 1,
+                    onClick = { optionsTabIndex.intValue = 1 },
+                    text = { Text("Sincronización") }
+                )
+                Tab(
+                    selected = optionsTabIndex.intValue == 2,
+                    onClick = { optionsTabIndex.intValue = 2 },
+                    text = { Text("Datos") }
+                )
             }
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                androidx.compose.material3.RadioButton(
-                    selected = config.autoSyncMode == com.zynerio.bibliotecajelly.data.AutoSyncMode.OnClose,
-                    onClick = { onAutoSyncModeChanged(com.zynerio.bibliotecajelly.data.AutoSyncMode.OnClose) }
+            if (optionsTabIndex.intValue == 0) {
+                TextField(
+                    value = config.serverAddress,
+                    onValueChange = onServerChanged,
+                    label = { Text("Dirección del servidor (IP o dominio)") },
+                    modifier = Modifier.fillMaxWidth()
                 )
-                Text("Al cerrar la aplicación")
+
+                TextField(
+                    value = config.port,
+                    onValueChange = onPortChanged,
+                    label = { Text("Puerto") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                TextField(
+                    value = config.username,
+                    onValueChange = onUsernameChanged,
+                    label = { Text("Usuario") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                TextField(
+                    value = config.password,
+                    onValueChange = onPasswordChanged,
+                    label = { Text("Contraseña") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                TextField(
+                    value = config.apiKey,
+                    onValueChange = onApiKeyChanged,
+                    label = { Text("API key (opcional)") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedButton(
+                    onClick = {
+                        onTestConnection { success, message ->
+                            connectionDialogTitle.value = if (success) "Conexión correcta" else "Error de conexión"
+                            connectionDialogMessage.value = message
+                            showConnectionDialog.value = true
+                        }
+                    },
+                    enabled = !config.isValidating,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Probar conexión")
+                }
             }
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                androidx.compose.material3.RadioButton(
-                    selected = config.autoSyncMode == com.zynerio.bibliotecajelly.data.AutoSyncMode.Manual,
-                    onClick = { onAutoSyncModeChanged(com.zynerio.bibliotecajelly.data.AutoSyncMode.Manual) }
+            if (optionsTabIndex.intValue == 1) {
+                Text(
+                    text = "Sincronización automática",
+                    style = MaterialTheme.typography.titleMedium
                 )
-                Text("Solo manual")
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    androidx.compose.material3.RadioButton(
+                        selected = config.autoSyncMode == com.zynerio.bibliotecajelly.data.AutoSyncMode.OnStart,
+                        onClick = { onAutoSyncModeChanged(com.zynerio.bibliotecajelly.data.AutoSyncMode.OnStart) }
+                    )
+                    Text("Al iniciar la aplicación")
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    androidx.compose.material3.RadioButton(
+                        selected = config.autoSyncMode == com.zynerio.bibliotecajelly.data.AutoSyncMode.OnClose,
+                        onClick = { onAutoSyncModeChanged(com.zynerio.bibliotecajelly.data.AutoSyncMode.OnClose) }
+                    )
+                    Text("Al cerrar la aplicación")
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    androidx.compose.material3.RadioButton(
+                        selected = config.autoSyncMode == com.zynerio.bibliotecajelly.data.AutoSyncMode.Manual,
+                        onClick = { onAutoSyncModeChanged(com.zynerio.bibliotecajelly.data.AutoSyncMode.Manual) }
+                    )
+                    Text("Solo manual")
+                }
+
+                Text(
+                    text = "Detalles de películas",
+                    style = MaterialTheme.typography.titleMedium
+                )
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.RadioButton(
+                        selected = config.movieDetailsSyncMode == MovieDetailsSyncMode.All,
+                        onClick = { onMovieDetailsSyncModeChanged(MovieDetailsSyncMode.All) }
+                    )
+                    Text("Todos (más completo, más lento)")
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.RadioButton(
+                        selected = config.movieDetailsSyncMode == MovieDetailsSyncMode.RecentOnly,
+                        onClick = { onMovieDetailsSyncModeChanged(MovieDetailsSyncMode.RecentOnly) }
+                    )
+                    Text("Solo recientes (más rápido)")
+                }
+
+                Text(
+                    text = "Vista de biblioteca",
+                    style = MaterialTheme.typography.titleMedium
+                )
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.RadioButton(
+                        selected = config.listDisplayMode == ListDisplayMode.Infinite,
+                        onClick = { onListDisplayModeChanged(ListDisplayMode.Infinite) }
+                    )
+                    Text("Listado infinito")
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.RadioButton(
+                        selected = config.listDisplayMode == ListDisplayMode.Paged50,
+                        onClick = { onListDisplayModeChanged(ListDisplayMode.Paged50) }
+                    )
+                    Text("Paginado (50 por página, swipe lateral)")
+                }
+
+                Text(
+                    text = "Portadas offline",
+                    style = MaterialTheme.typography.titleMedium
+                )
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = config.downloadPostersOffline,
+                        onCheckedChange = { onDownloadPostersOfflineChanged(it) }
+                    )
+                    Text("Descargar portadas para uso sin conexión")
+                }
             }
 
-            Text(
-                text = "Detalles de películas",
-                style = MaterialTheme.typography.titleMedium
-            )
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                androidx.compose.material3.RadioButton(
-                    selected = config.movieDetailsSyncMode == MovieDetailsSyncMode.All,
-                    onClick = { onMovieDetailsSyncModeChanged(MovieDetailsSyncMode.All) }
+            if (optionsTabIndex.intValue == 2) {
+                Text(
+                    text = config.databaseSizeText,
+                    style = MaterialTheme.typography.bodySmall
                 )
-                Text("Todos (más completo, más lento)")
-            }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                androidx.compose.material3.RadioButton(
-                    selected = config.movieDetailsSyncMode == MovieDetailsSyncMode.RecentOnly,
-                    onClick = { onMovieDetailsSyncModeChanged(MovieDetailsSyncMode.RecentOnly) }
+                Text(
+                    text = config.postersSizeText,
+                    style = MaterialTheme.typography.bodySmall
                 )
-                Text("Solo recientes (más rápido)")
-            }
 
-            Text(
-                text = "Vista de biblioteca",
-                style = MaterialTheme.typography.titleMedium
-            )
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                androidx.compose.material3.RadioButton(
-                    selected = config.listDisplayMode == ListDisplayMode.Infinite,
-                    onClick = { onListDisplayModeChanged(ListDisplayMode.Infinite) }
-                )
-                Text("Listado infinito")
-            }
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                androidx.compose.material3.RadioButton(
-                    selected = config.listDisplayMode == ListDisplayMode.Paged50,
-                    onClick = { onListDisplayModeChanged(ListDisplayMode.Paged50) }
-                )
-                Text("Paginado (50 por página, swipe lateral)")
-            }
-
-            Text(
-                text = "Portadas offline",
-                style = MaterialTheme.typography.titleMedium
-            )
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(
-                    checked = config.downloadPostersOffline,
-                    onCheckedChange = { onDownloadPostersOfflineChanged(it) }
-                )
-                Text("Descargar portadas para uso sin conexión")
+                OutlinedButton(
+                    onClick = { showSyncHistoryDialog.value = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Historial de sincronización")
+                }
             }
 
             if (config.validationError != null) {
@@ -381,16 +447,6 @@ fun ConfigScreen(
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
-
-            Text(
-                text = config.databaseSizeText,
-                style = MaterialTheme.typography.bodySmall
-            )
-
-            Text(
-                text = config.postersSizeText,
-                style = MaterialTheme.typography.bodySmall
-            )
 
         }
 
@@ -540,6 +596,45 @@ fun ConfigScreen(
                 }
             )
         }
+
+        if (showConnectionDialog.value) {
+            AlertDialog(
+                onDismissRequest = { showConnectionDialog.value = false },
+                confirmButton = {
+                    Button(onClick = { showConnectionDialog.value = false }) {
+                        Text("Cerrar")
+                    }
+                },
+                title = { Text(connectionDialogTitle.value) },
+                text = { Text(connectionDialogMessage.value) }
+            )
+        }
+
+        if (showSyncHistoryDialog.value) {
+            AlertDialog(
+                onDismissRequest = { showSyncHistoryDialog.value = false },
+                confirmButton = {
+                    Button(onClick = { showSyncHistoryDialog.value = false }) {
+                        Text("Cerrar")
+                    }
+                },
+                title = { Text("Historial de sincronización") },
+                text = {
+                    if (uiState.sync.syncHistory.isEmpty()) {
+                        Text("Sin historial todavía")
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            uiState.sync.syncHistory.take(20).forEach { entry ->
+                                Text(
+                                    text = entry,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                    }
+                }
+            )
+        }
     }
 }
 
@@ -559,6 +654,9 @@ fun LibraryScreen(
     onSyncFastAll: () -> Unit,
     onSyncFastMovies: () -> Unit,
     onSyncFastSeries: () -> Unit,
+    onSyncDetailsAll: () -> Unit,
+    onSyncDetailsMovies: () -> Unit,
+    onSyncDetailsSeries: () -> Unit,
     onCancelSync: () -> Unit,
     onOpenConfig: () -> Unit,
     onGenreSelected: (String) -> Unit,
@@ -588,92 +686,79 @@ fun LibraryScreen(
     val scope = rememberCoroutineScope()
 
     val showSyncDialog = remember { mutableStateOf(false) }
+    val showSyncHistoryDialog = remember { mutableStateOf(false) }
 
-    val genreFilter = if (library.selectedTab == LibraryTab.Movies) {
-        library.selectedMovieGenre
+    val genreFilters = if (library.selectedTab == LibraryTab.Movies) {
+        library.selectedMovieGenres
     } else {
-        library.selectedSeriesGenre
+        library.selectedSeriesGenres
     }
 
-    val technicalFilterType = if (library.selectedTab == LibraryTab.Movies) {
-        library.selectedMovieTechnicalType
+    val technicalFilters = if (library.selectedTab == LibraryTab.Movies) {
+        library.selectedMovieTechnicalFilters
     } else {
-        library.selectedSeriesTechnicalType
-    }
-
-    val technicalFilterValue = if (library.selectedTab == LibraryTab.Movies) {
-        library.selectedMovieTechnicalValue
-    } else {
-        library.selectedSeriesTechnicalValue
+        library.selectedSeriesTechnicalFilters
     }
 
     val activeFiltersCount = buildList {
         if (library.searchQuery.isNotBlank()) add("search")
-        if (!genreFilter.isNullOrBlank()) add("genre")
-        if (!technicalFilterValue.isNullOrBlank() && technicalFilterType != null) add("technical")
+        if (genreFilters.isNotEmpty()) add("genre")
+        if (technicalFilters.isNotEmpty()) add("technical")
         if (library.showOnlyMovieFavorites || library.showOnlySeriesFavorites) add("favorites")
     }.size
 
-    val genreFilteredMovies = if (library.selectedMovieGenre.isNullOrBlank()) {
+    val genreFilteredMovies = if (library.selectedMovieGenres.isEmpty()) {
         movies
     } else {
         movies.filter { movie ->
-            movie.genres.any { it.equals(library.selectedMovieGenre, ignoreCase = true) }
+            movie.genres.any { genre ->
+                library.selectedMovieGenres.any { selected ->
+                    genre.equals(selected, ignoreCase = true)
+                }
+            }
         }
     }
 
-    val filteredMovies = when (library.selectedMovieTechnicalType) {
-        TechnicalFilterType.Quality -> {
-            val target = library.selectedMovieTechnicalValue
-            if (target.isNullOrBlank()) {
-                genreFilteredMovies
-            } else {
-                genreFilteredMovies.filter { it.quality.equals(target, ignoreCase = true) }
+    val filteredMovies = if (library.selectedMovieTechnicalFilters.isEmpty()) {
+        genreFilteredMovies
+    } else {
+        genreFilteredMovies.filter { movie ->
+            library.selectedMovieTechnicalFilters.all { (type, selectedValues) ->
+                if (selectedValues.isEmpty()) {
+                    true
+                } else {
+                    val value = when (type) {
+                        TechnicalFilterType.Quality -> movie.quality
+                        TechnicalFilterType.Format -> movie.format
+                        TechnicalFilterType.Resolution -> movie.resolution
+                    }
+                    value != null && selectedValues.any { it.equals(value, ignoreCase = true) }
+                }
             }
         }
-
-        TechnicalFilterType.Format -> {
-            val target = library.selectedMovieTechnicalValue
-            if (target.isNullOrBlank()) {
-                genreFilteredMovies
-            } else {
-                genreFilteredMovies.filter { it.format.equals(target, ignoreCase = true) }
-            }
-        }
-
-        TechnicalFilterType.Resolution -> {
-            val target = library.selectedMovieTechnicalValue
-            if (target.isNullOrBlank()) {
-                genreFilteredMovies
-            } else {
-                genreFilteredMovies.filter { it.resolution.equals(target, ignoreCase = true) }
-            }
-        }
-
-        null -> genreFilteredMovies
     }
 
-    val genreFilteredSeries = if (library.selectedSeriesGenre.isNullOrBlank()) {
+    val genreFilteredSeries = if (library.selectedSeriesGenres.isEmpty()) {
         series
     } else {
         series.filter { item ->
-            item.genres.any { it.equals(library.selectedSeriesGenre, ignoreCase = true) }
+            item.genres.any { genre ->
+                library.selectedSeriesGenres.any { selected ->
+                    genre.equals(selected, ignoreCase = true)
+                }
+            }
         }
     }
 
-    val filteredSeries = when (library.selectedSeriesTechnicalType) {
-        TechnicalFilterType.Quality,
-        TechnicalFilterType.Format,
-        TechnicalFilterType.Resolution -> {
-            val matchedIds = library.selectedSeriesTechnicalMatchedIds
-            if (matchedIds == null) {
-                genreFilteredSeries
-            } else {
-                genreFilteredSeries.filter { it.id in matchedIds }
-            }
+    val filteredSeries = if (library.selectedSeriesTechnicalFilters.isEmpty()) {
+        genreFilteredSeries
+    } else {
+        val matchedIds = library.selectedSeriesTechnicalMatchedIds
+        if (matchedIds == null) {
+            genreFilteredSeries
+        } else {
+            genreFilteredSeries.filter { it.id in matchedIds }
         }
-
-        null -> genreFilteredSeries
     }
 
     val favoriteFilteredMovies = if (library.showOnlyMovieFavorites) {
@@ -1003,7 +1088,7 @@ fun LibraryScreen(
             modifier = Modifier.padding(horizontal = 16.dp)
         )
 
-        if (!genreFilter.isNullOrBlank() || (!technicalFilterValue.isNullOrBlank() && technicalFilterType != null)) {
+        if (genreFilters.isNotEmpty() || technicalFilters.isNotEmpty()) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1012,36 +1097,38 @@ fun LibraryScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column {
-                    if (!genreFilter.isNullOrBlank()) {
+                    if (genreFilters.isNotEmpty()) {
                         Text(
-                            text = "Género: $genreFilter",
+                            text = "Géneros: ${genreFilters.joinToString(", ")}",
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
-                    if (!technicalFilterValue.isNullOrBlank() && technicalFilterType != null) {
-                        val techLabel = when (technicalFilterType) {
-                            TechnicalFilterType.Quality -> "Calidad"
-                            TechnicalFilterType.Format -> "Formato"
-                            TechnicalFilterType.Resolution -> "Resolución"
+                    if (technicalFilters.isNotEmpty()) {
+                        technicalFilters.forEach { (type, values) ->
+                            val techLabel = when (type) {
+                                TechnicalFilterType.Quality -> "Calidad"
+                                TechnicalFilterType.Format -> "Formato"
+                                TechnicalFilterType.Resolution -> "Resolución"
+                            }
+                            Text(
+                                text = "$techLabel: ${values.joinToString(", ")}",
+                                style = MaterialTheme.typography.bodySmall
+                            )
                         }
-                        Text(
-                            text = "$techLabel: $technicalFilterValue",
-                            style = MaterialTheme.typography.bodySmall
-                        )
                     }
                 }
                 Column(horizontalAlignment = Alignment.End) {
-                    if (!genreFilter.isNullOrBlank()) {
+                    if (genreFilters.isNotEmpty()) {
                         Text(
-                            text = "Quitar género",
+                            text = "Limpiar género",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.clickable { onClearGenreFilter() }
                         )
                     }
-                    if (!technicalFilterValue.isNullOrBlank() && technicalFilterType != null) {
+                    if (technicalFilters.isNotEmpty()) {
                         Text(
-                            text = "Quitar técnico",
+                            text = "Limpiar detalles",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.clickable { onClearTechnicalFilter() }
@@ -1131,7 +1218,9 @@ fun LibraryScreen(
             Text(
                 text = sync.lastSyncText?.let { "Última actualización: $it" }
                     ?: "Última actualización: pendiente",
-                style = MaterialTheme.typography.bodySmall
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.clickable { showSyncHistoryDialog.value = true }
             )
         }
 
@@ -1261,6 +1350,64 @@ fun LibraryScreen(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text("Rápido: Solo series")
+                        }
+                        Spacer(modifier = Modifier.height(24.dp))
+                        Text("Solo detalles (sin catálogo)")
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = {
+                                showSyncDialog.value = false
+                                onSyncDetailsAll()
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Detalles: Todo")
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = {
+                                showSyncDialog.value = false
+                                onSyncDetailsMovies()
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Detalles: Solo películas")
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = {
+                                showSyncDialog.value = false
+                                onSyncDetailsSeries()
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Detalles: Solo series")
+                        }
+                    }
+                }
+            )
+        }
+
+        if (showSyncHistoryDialog.value) {
+            AlertDialog(
+                onDismissRequest = { showSyncHistoryDialog.value = false },
+                confirmButton = {
+                    Button(onClick = { showSyncHistoryDialog.value = false }) {
+                        Text("Cerrar")
+                    }
+                },
+                title = { Text("Historial de sincronización") },
+                text = {
+                    if (sync.syncHistory.isEmpty()) {
+                        Text("Sin historial todavía")
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            sync.syncHistory.take(20).forEach { entry ->
+                                Text(
+                                    text = entry,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
                         }
                     }
                 }

@@ -88,6 +88,7 @@ class CredentialsStore(context: Context) {
     private val keyMovieSortMode = "movie_sort_mode"
     private val keySeriesSortMode = "series_sort_mode"
     private val keyLibraryLastSeenMillis = "library_last_seen_millis"
+    private val keySyncHistory = "sync_history"
 
     fun getServerConfig(): ServerConfig? {
         val baseUrl = prefs.getString(keyBaseUrl, null) ?: return null
@@ -231,6 +232,21 @@ class CredentialsStore(context: Context) {
             putLong(keyLibraryLastSeenMillis, epochMillis)
         }
     }
+
+    fun getSyncHistory(): List<String> {
+        val raw = prefs.getString(keySyncHistory, null).orEmpty()
+        if (raw.isBlank()) return emptyList()
+        return raw.split("\n").filter { it.isNotBlank() }
+    }
+
+    fun appendSyncHistory(entry: String) {
+        val current = getSyncHistory().toMutableList()
+        current.add(0, entry)
+        val trimmed = current.take(100)
+        prefs.edit {
+            putString(keySyncHistory, trimmed.joinToString("\n"))
+        }
+    }
 }
 
 sealed class ConnectionResult {
@@ -304,6 +320,11 @@ interface JellyfinRepository {
         onProgress: (processed: Int, total: Int, phase: SyncProgressPhase) -> Unit
     ): SyncResult
 
+    suspend fun syncDetailsOnly(
+        scope: SyncScope = SyncScope.All,
+        onProgress: (processed: Int, total: Int, phase: SyncProgressPhase) -> Unit
+    ): SyncResult
+
     suspend fun getLastSyncEpochMillis(): Long?
 
     suspend fun getAutoSyncMode(): AutoSyncMode
@@ -320,6 +341,7 @@ interface JellyfinRepository {
     suspend fun setSeriesFavorite(seriesId: String, isFavorite: Boolean)
     suspend fun getLibraryLastSeenMillis(): Long?
     suspend fun setLibraryLastSeenMillis(epochMillis: Long)
+    suspend fun getSyncHistory(): List<String>
     suspend fun getOfflinePostersEnabled(): Boolean
     suspend fun setOfflinePostersEnabled(enabled: Boolean)
 
@@ -524,6 +546,9 @@ class DefaultJellyfinRepository(
     override suspend fun setLibraryLastSeenMillis(epochMillis: Long) {
         credentialsStore.setLibraryLastSeenMillis(epochMillis)
     }
+
+    override suspend fun getSyncHistory(): List<String> =
+        credentialsStore.getSyncHistory()
 
     override suspend fun getOfflinePostersEnabled(): Boolean =
         credentialsStore.getOfflinePostersEnabled()
@@ -911,9 +936,9 @@ class DefaultJellyfinRepository(
             try {
                 val syncMovies = scope == SyncScope.All || scope == SyncScope.Movies
                 val syncSeries = scope == SyncScope.All || scope == SyncScope.Series
-                val movieDetailsMode = credentialsStore.getMovieDetailsSyncMode()
                 val offlinePostersEnabled = credentialsStore.getOfflinePostersEnabled()
-                val detailFields = "MediaStreams,MediaSources,Width,Height,Genres,DateCreated"
+                var totalMovies = 0
+                var totalSeriesItems = 0
 
                 var processed = 0
                 var total: Int
@@ -976,61 +1001,7 @@ class DefaultJellyfinRepository(
                         startIndex += items.size
                     }
 
-                    val targetMovieIds = selectMovieDetailsTargets(changedMovieIds, movieDetailsMode)
-                    if (targetMovieIds.isNotEmpty()) {
-                        var detailsProcessed = 0
-                        val detailsTotal = targetMovieIds.size
-                        onProgress(0, detailsTotal, SyncProgressPhase.FetchingMoviesDetails)
-
-                        var detailStartIndex = 0
-                        val detailPageSize = 300
-                        while (true) {
-                            val response = getApi().getItems(
-                                userId = userId ?: "",
-                                includeItemTypes = "Movie",
-                                fields = detailFields,
-                                minDateLastSaved = null,
-                                startIndex = detailStartIndex,
-                                limit = detailPageSize
-                            )
-                            val items = response.Items.orEmpty()
-                            if (items.isEmpty()) break
-
-                            val detailDtos = items.filter { it.Type == "Movie" && it.Id in targetMovieIds }
-                            val existingById = if (detailDtos.isNotEmpty()) {
-                                db.movieDao().getMoviesByIds(detailDtos.map { it.Id }).associateBy { it.id }
-                            } else {
-                                emptyMap()
-                            }
-                            val pageEntities = detailDtos.mapNotNull { dto ->
-                                dto.toMovieEntity(config.baseUrl, existingById[dto.Id])
-                            }.map { entity ->
-                                entity.copy(
-                                    posterUrl = resolvePosterUrl(
-                                        itemTypeDir = POSTER_MOVIES_DIR,
-                                        itemId = entity.id,
-                                        remoteUrl = entity.posterUrl,
-                                        offlineEnabled = offlinePostersEnabled
-                                    )
-                                )
-                            }
-                            if (pageEntities.isNotEmpty()) {
-                                db.movieDao().upsertAll(pageEntities)
-                            }
-
-                            detailsProcessed += detailDtos.size
-                            onProgress(
-                                detailsProcessed.coerceAtMost(detailsTotal),
-                                detailsTotal,
-                                SyncProgressPhase.FetchingMoviesDetails
-                            )
-
-                            if (detailsProcessed >= detailsTotal || items.size < detailPageSize) {
-                                break
-                            }
-                            detailStartIndex += items.size
-                        }
-                    }
+                    totalMovies += changedMovieIds.size
                 }
 
                 if (syncSeries) {
@@ -1041,7 +1012,7 @@ class DefaultJellyfinRepository(
                         val response = getApi().getItems(
                             userId = userId ?: "",
                             includeItemTypes = "Series",
-                            fields = "",
+                            fields = "Genres,DateCreated",
                             minDateLastSaved = null,
                             startIndex = startIndex,
                             limit = pageSize
@@ -1074,6 +1045,7 @@ class DefaultJellyfinRepository(
                         }
                         if (seriesEntities.isNotEmpty()) {
                             db.seriesDao().upsertSeries(seriesEntities)
+                            totalSeriesItems += seriesEntities.size
                         }
 
                         total = processed + items.size + pageSize
@@ -1089,8 +1061,89 @@ class DefaultJellyfinRepository(
                         startIndex += items.size
                     }
 
-                    refreshSeriesDetailsBatch(seriesIdsToRefresh, onProgress)
                 }
+
+                credentialsStore.updateLastSync(System.currentTimeMillis())
+                credentialsStore.appendSyncHistory(
+                    buildSyncHistoryEntry(
+                        mode = "Rápida",
+                        scope = scope,
+                        moviesUpdated = totalMovies,
+                        movieDetailsUpdated = 0,
+                        seriesUpdated = totalSeriesItems,
+                        seriesDetailsUpdated = 0
+                    )
+                )
+
+                SyncResult.Success
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: retrofit2.HttpException) {
+                SyncResult.NetworkError(httpDiagnosticMessage(e))
+            } catch (e: java.net.SocketTimeoutException) {
+                SyncResult.NetworkError(networkDiagnosticMessage(e))
+            } catch (e: java.net.UnknownHostException) {
+                SyncResult.NetworkError(networkDiagnosticMessage(e))
+            } catch (e: java.net.ConnectException) {
+                SyncResult.NetworkError(networkDiagnosticMessage(e))
+            } catch (e: javax.net.ssl.SSLException) {
+                SyncResult.NetworkError(networkDiagnosticMessage(e))
+            } catch (e: Exception) {
+                SyncResult.UnknownError(networkDiagnosticMessage(e))
+            }
+        }
+    }
+
+    override suspend fun syncDetailsOnly(
+        scope: SyncScope,
+        onProgress: (processed: Int, total: Int, phase: SyncProgressPhase) -> Unit
+    ): SyncResult {
+        return withContext(Dispatchers.IO) {
+            val config = credentialsStore.getServerConfig()
+                ?: return@withContext SyncResult.NetworkError("Configuración del servidor no encontrada")
+
+            val userId = config.userId
+            if (userId.isNullOrBlank() && config.apiKey.isNullOrBlank()) {
+                return@withContext SyncResult.NetworkError("No hay usuario autenticado")
+            }
+
+            try {
+                val syncMovies = scope == SyncScope.All || scope == SyncScope.Movies
+                val syncSeries = scope == SyncScope.All || scope == SyncScope.Series
+                var totalMovieDetails = 0
+                var totalSeriesDetails = 0
+
+                if (syncMovies) {
+                    val movieIds = db.movieDao().getAllMovieIds()
+                    onProgress(0, movieIds.size, SyncProgressPhase.FetchingMoviesDetails)
+                    movieIds.forEachIndexed { index, movieId ->
+                        runCatching {
+                            refreshMovieDetails(movieId)
+                        }.onSuccess {
+                            totalMovieDetails++
+                        }.onFailure { error ->
+                            Log.w("JellyfinSync", "No se pudo refrescar detalle de película $movieId", error)
+                        }
+                        onProgress(index + 1, movieIds.size, SyncProgressPhase.FetchingMoviesDetails)
+                    }
+                }
+
+                if (syncSeries) {
+                    val seriesIds = db.seriesDao().getAllSeriesIds().toSet()
+                    totalSeriesDetails = refreshSeriesDetailsBatch(seriesIds, onProgress)
+                }
+
+                credentialsStore.updateLastSync(System.currentTimeMillis())
+                credentialsStore.appendSyncHistory(
+                    buildSyncHistoryEntry(
+                        mode = "Solo detalles",
+                        scope = scope,
+                        moviesUpdated = 0,
+                        movieDetailsUpdated = totalMovieDetails,
+                        seriesUpdated = 0,
+                        seriesDetailsUpdated = totalSeriesDetails
+                    )
+                )
 
                 SyncResult.Success
             } catch (e: CancellationException) {
@@ -1153,7 +1206,9 @@ class DefaultJellyfinRepository(
                 var processed = 0
                 var total: Int
                 var totalMovies = 0
+                var totalMovieDetails = 0
                 var totalSeriesItems = 0
+                var totalSeriesDetails = 0
 
                 if (syncMovies) {
                     val changedMovieIds = linkedSetOf<String>()
@@ -1257,6 +1312,7 @@ class DefaultJellyfinRepository(
                             }
 
                             detailsProcessed += detailDtos.size
+                            totalMovieDetails += detailDtos.size
                             onProgress(
                                 detailsProcessed.coerceAtMost(detailsTotal),
                                 detailsTotal,
@@ -1281,7 +1337,7 @@ class DefaultJellyfinRepository(
                         val response = getApi().getItems(
                             userId = userId ?: "",
                             includeItemTypes = "Series",
-                            fields = "",
+                            fields = "Genres,DateCreated",
                             minDateLastSaved = null,
                             startIndex = startIndex,
                             limit = pageSize
@@ -1330,15 +1386,22 @@ class DefaultJellyfinRepository(
                         startIndex += items.size
                     }
 
-                    refreshSeriesDetailsBatch(seriesIdsToRefresh, onProgress)
+                    totalSeriesDetails = refreshSeriesDetailsBatch(seriesIdsToRefresh, onProgress)
 
                     Log.d("JellyfinSync", "Series recibidas y guardadas: $totalSeriesItems")
                 }
 
-                if (syncMovies) {
-                    val now = System.currentTimeMillis()
-                    credentialsStore.updateLastSync(now)
-                }
+                credentialsStore.updateLastSync(System.currentTimeMillis())
+                credentialsStore.appendSyncHistory(
+                    buildSyncHistoryEntry(
+                        mode = "Normal",
+                        scope = scope,
+                        moviesUpdated = totalMovies,
+                        movieDetailsUpdated = totalMovieDetails,
+                        seriesUpdated = totalSeriesItems,
+                        seriesDetailsUpdated = totalSeriesDetails
+                    )
+                )
 
                 Log.d(
                     "JellyfinSync",
@@ -1377,18 +1440,41 @@ class DefaultJellyfinRepository(
     private suspend fun refreshSeriesDetailsBatch(
         seriesIds: Set<String>,
         onProgress: (processed: Int, total: Int, phase: SyncProgressPhase) -> Unit
-    ) {
-        if (seriesIds.isEmpty()) return
+    ): Int {
+        if (seriesIds.isEmpty()) return 0
 
         onProgress(0, seriesIds.size, SyncProgressPhase.SeriesDetails)
+        var refreshed = 0
         seriesIds.forEachIndexed { index, seriesId ->
             runCatching {
                 refreshSeriesDetails(seriesId)
+            }.onSuccess {
+                refreshed++
             }.onFailure { error ->
                 Log.w("JellyfinSync", "No se pudo refrescar detalle de serie $seriesId", error)
             }
             onProgress(index + 1, seriesIds.size, SyncProgressPhase.SeriesDetails)
         }
+
+        return refreshed
+    }
+
+    private fun buildSyncHistoryEntry(
+        mode: String,
+        scope: SyncScope,
+        moviesUpdated: Int,
+        movieDetailsUpdated: Int,
+        seriesUpdated: Int,
+        seriesDetailsUpdated: Int
+    ): String {
+        val formatter = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
+        val timestamp = formatter.format(Date())
+        val scopeLabel = when (scope) {
+            SyncScope.All -> "Todo"
+            SyncScope.Movies -> "Películas"
+            SyncScope.Series -> "Series"
+        }
+        return "$timestamp · $mode · $scopeLabel · Películas: $moviesUpdated (detalles: $movieDetailsUpdated) · Series: $seriesUpdated (detalles: $seriesDetailsUpdated)"
     }
 
     private fun selectMovieDetailsTargets(
