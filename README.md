@@ -4,12 +4,24 @@ Aplicación Android nativa desarrollada en Kotlin/Jetpack Compose que actúa com
 para un servidor Jellyfin. 
 Importa los metadatos de películas y series, los almacena en una base de datos local y permite consultarlos sin conexión.
 
-## Changelog interno
-
-### v1.4
-
 ![img1confi](https://github.com/user-attachments/assets/9be305ab-ad2f-40a4-8c22-25e6c06c0fc9)
 
+## Changelog interno
+
+### v1.5
+
+- Nueva sincronización específica de **últimos añadidos**:
+  - `Solo películas (últimos añadidos)`
+  - `Solo series (últimos añadidos)`
+- Esta opción evita refrescar todo el catálogo para traer únicamente lo nuevo.
+- Aviso automático de nueva versión:
+  - popup al detectar release más reciente en GitHub,
+  - botón directo para descargar la actualización,
+  - opción “Más tarde” para ocultar ese aviso hasta la siguiente release.
+- Se mantiene el resto de modos existentes (Normal, Rápida y Solo detalles).
+- Versión de aplicación actualizada a `1.5` (`versionCode = 5`).
+
+### v1.4
 
 - Sincronización diferenciada por modo:
   - **Normal** (catálogo + detalles),
@@ -52,14 +64,16 @@ Importa los metadatos de películas y series, los almacena en una base de datos 
 
 ## Estado
 
-- Versión actual: **1.4**
+- Versión actual: **1.5**
 - Android mínimo: **7.0 (API 24)**
 - Stack principal: **Kotlin + Jetpack Compose + Material 3**
 
-## Funcionalidades destacadas (v1.4)
+## Funcionalidades destacadas (v1.5)
 
 ### Novedades de la versión
 
+- Sincronización de “últimos añadidos” para películas y series sin refresco completo.
+- Aviso in-app de actualización al detectar una release más reciente en GitHub.
 - Modos de sincronización separados (normal / rápida / solo detalles).
 - Historial de actualizaciones visible desde opciones y desde la fecha de última actualización.
 - Botón “Probar conexión” en configuración.
@@ -226,6 +240,7 @@ En `DefaultJellyfinRepository.syncIncremental`:
   - `getItems(userId, IncludeItemTypes = "Movie", ...)`
   - `getItems(userId, IncludeItemTypes = "Series,Season,Episode", ...)`
 - Solo se procesan los elementos cambiados desde la última sincronización.
+- En modo “solo nuevos”, si todavía no existe una sincronización previa (`lastSyncEpochMillis` vacío), se realiza una carga completa inicial del catálogo para establecer la base incremental.
 - Al finalizar, actualiza el timestamp de última sincronización.
 
 ### Progreso y logs
