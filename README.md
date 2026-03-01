@@ -8,7 +8,21 @@ Importa los metadatos de películas y series, los almacena en una base de datos 
 
 ## Changelog interno
 
+### v1.5
+
+- Nueva sincronización específica de **últimos añadidos**:
+  - `Solo películas (últimos añadidos)`
+  - `Solo series (últimos añadidos)`
+- Esta opción evita refrescar todo el catálogo para traer únicamente lo nuevo.
+- Aviso automático de nueva versión:
+  - popup al detectar release más reciente en GitHub,
+  - botón directo para descargar la actualización,
+  - opción “Más tarde” para ocultar ese aviso hasta la siguiente release.
+- Se mantiene el resto de modos existentes (Normal, Rápida y Solo detalles).
+- Versión de aplicación actualizada a `1.5` (`versionCode = 5`).
+
 ### v1.4
+
 - Sincronización diferenciada por modo:
   - **Normal** (catálogo + detalles),
   - **Rápida** (solo catálogo),
@@ -50,14 +64,16 @@ Importa los metadatos de películas y series, los almacena en una base de datos 
 
 ## Estado
 
-- Versión actual: **1.4**
+- Versión actual: **1.5**
 - Android mínimo: **7.0 (API 24)**
 - Stack principal: **Kotlin + Jetpack Compose + Material 3**
 
-## Funcionalidades destacadas (v1.4)
+## Funcionalidades destacadas (v1.5)
 
 ### Novedades de la versión
 
+- Sincronización de “últimos añadidos” para películas y series sin refresco completo.
+- Aviso in-app de actualización al detectar una release más reciente en GitHub.
 - Modos de sincronización separados (normal / rápida / solo detalles).
 - Historial de actualizaciones visible desde opciones y desde la fecha de última actualización.
 - Botón “Probar conexión” en configuración.
