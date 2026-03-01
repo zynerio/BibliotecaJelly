@@ -131,6 +131,15 @@ fun BibliotecaJellyApp(viewModel: MainViewModel) {
     val isConfigured by viewModel.isConfigured.collectAsState()
     val totalMovies by viewModel.totalMoviesCount.collectAsState()
     val totalSeries by viewModel.totalSeriesCount.collectAsState()
+    val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
+    val installedVersionName = remember(context) {
+        runCatching {
+            context.packageManager
+                .getPackageInfo(context.packageName, 0)
+                .versionName
+        }.getOrNull().orEmpty().ifBlank { "desconocida" }
+    }
 
     Scaffold(
         modifier = Modifier.fillMaxSize()
@@ -165,6 +174,8 @@ fun BibliotecaJellyApp(viewModel: MainViewModel) {
                 onSyncAll = viewModel::triggerManualSync,
                 onSyncMovies = viewModel::triggerMoviesSync,
                 onSyncSeries = viewModel::triggerSeriesSync,
+                onSyncRecentMovies = viewModel::triggerRecentMoviesSync,
+                onSyncRecentSeries = viewModel::triggerRecentSeriesSync,
                 onSyncFastAll = viewModel::triggerFastSync,
                 onSyncFastMovies = viewModel::triggerFastMoviesSync,
                 onSyncFastSeries = viewModel::triggerFastSeriesSync,
@@ -192,6 +203,33 @@ fun BibliotecaJellyApp(viewModel: MainViewModel) {
                 modifier = Modifier.padding(innerPadding)
             )
         }
+    }
+
+    if (uiState.update.showDialog) {
+        AlertDialog(
+            onDismissRequest = viewModel::postponeUpdateDialog,
+            title = { Text("Nueva versión disponible") },
+            text = {
+                val latestVersion = uiState.update.latestVersion.orEmpty().ifBlank { "nueva release" }
+                Text("Hay una nueva versión disponible: $latestVersion. Versión instalada: $installedVersionName.")
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val url = uiState.update.releaseUrl
+                    if (!url.isNullOrBlank()) {
+                        uriHandler.openUri(url)
+                    }
+                    viewModel.dismissUpdateDialog()
+                }) {
+                    Text("Descargar")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = viewModel::postponeUpdateDialog) {
+                    Text("Más tarde")
+                }
+            }
+        )
     }
 }
 
@@ -222,7 +260,7 @@ fun ConfigScreen(
             context.packageManager
                 .getPackageInfo(context.packageName, 0)
                 .versionName
-        }.getOrNull().orEmpty().ifBlank { "1.3" }
+        }.getOrNull().orEmpty().ifBlank { "1.5" }
     }
     val showClearDialog = remember { mutableStateOf(false) }
     val clearConfirmText = remember { mutableStateOf("") }
@@ -651,6 +689,8 @@ fun LibraryScreen(
     onSyncAll: () -> Unit,
     onSyncMovies: () -> Unit,
     onSyncSeries: () -> Unit,
+    onSyncRecentMovies: () -> Unit,
+    onSyncRecentSeries: () -> Unit,
     onSyncFastAll: () -> Unit,
     onSyncFastMovies: () -> Unit,
     onSyncFastSeries: () -> Unit,
@@ -1282,14 +1322,15 @@ fun LibraryScreen(
                 confirmButton = {},
                 dismissButton = {},
                 text = {
-                    Column {
+                    Column(
+                        modifier = Modifier.verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         Text(
                             "Aviso: colecciones grandes pueden tardar varios minutos en sincronizar.",
                             style = MaterialTheme.typography.bodySmall
                         )
-                        Spacer(modifier = Modifier.height(12.dp))
                         Text("¿Qué deseas sincronizar?")
-                        Spacer(modifier = Modifier.height(16.dp))
                         Button(
                             onClick = {
                                 showSyncDialog.value = false
@@ -1299,29 +1340,56 @@ fun LibraryScreen(
                         ) {
                             Text("Todo")
                         }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Button(
-                            onClick = {
-                                showSyncDialog.value = false
-                                onSyncMovies()
-                            },
-                            modifier = Modifier.fillMaxWidth()
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text("Solo películas")
+                            Button(
+                                onClick = {
+                                    showSyncDialog.value = false
+                                    onSyncMovies()
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Películas")
+                            }
+                            Button(
+                                onClick = {
+                                    showSyncDialog.value = false
+                                    onSyncSeries()
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Series")
+                            }
                         }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Button(
-                            onClick = {
-                                showSyncDialog.value = false
-                                onSyncSeries()
-                            },
-                            modifier = Modifier.fillMaxWidth()
+
+                        Text("Últimos añadidos")
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text("Solo series")
+                            OutlinedButton(
+                                onClick = {
+                                    showSyncDialog.value = false
+                                    onSyncRecentMovies()
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Películas")
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    showSyncDialog.value = false
+                                    onSyncRecentSeries()
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Series")
+                            }
                         }
-                        Spacer(modifier = Modifier.height(24.dp))
-                        Text("Modo rápido (primera pasada)")
-                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Text("Rápida")
                         OutlinedButton(
                             onClick = {
                                 showSyncDialog.value = false
@@ -1329,31 +1397,33 @@ fun LibraryScreen(
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("Rápido: Todo")
+                            Text("Todo")
                         }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        OutlinedButton(
-                            onClick = {
-                                showSyncDialog.value = false
-                                onSyncFastMovies()
-                            },
-                            modifier = Modifier.fillMaxWidth()
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text("Rápido: Solo películas")
+                            OutlinedButton(
+                                onClick = {
+                                    showSyncDialog.value = false
+                                    onSyncFastMovies()
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Películas")
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    showSyncDialog.value = false
+                                    onSyncFastSeries()
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Series")
+                            }
                         }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        OutlinedButton(
-                            onClick = {
-                                showSyncDialog.value = false
-                                onSyncFastSeries()
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Rápido: Solo series")
-                        }
-                        Spacer(modifier = Modifier.height(24.dp))
-                        Text("Solo detalles (sin catálogo)")
-                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Text("Detalles (sin catálogo)")
                         OutlinedButton(
                             onClick = {
                                 showSyncDialog.value = false
@@ -1361,27 +1431,30 @@ fun LibraryScreen(
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("Detalles: Todo")
+                            Text("Todo")
                         }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        OutlinedButton(
-                            onClick = {
-                                showSyncDialog.value = false
-                                onSyncDetailsMovies()
-                            },
-                            modifier = Modifier.fillMaxWidth()
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text("Detalles: Solo películas")
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        OutlinedButton(
-                            onClick = {
-                                showSyncDialog.value = false
-                                onSyncDetailsSeries()
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Detalles: Solo series")
+                            OutlinedButton(
+                                onClick = {
+                                    showSyncDialog.value = false
+                                    onSyncDetailsMovies()
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Películas")
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    showSyncDialog.value = false
+                                    onSyncDetailsSeries()
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Series")
+                            }
                         }
                     }
                 }

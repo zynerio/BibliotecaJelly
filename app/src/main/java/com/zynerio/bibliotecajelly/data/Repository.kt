@@ -21,6 +21,7 @@ import okhttp3.OkHttpClient
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import okhttp3.logging.HttpLoggingInterceptor
+import org.json.JSONObject
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import java.io.File
@@ -38,6 +39,12 @@ data class ServerConfig(
     val accessToken: String?,
     val userId: String?,
     val lastSyncEpochMillis: Long?
+)
+
+data class AppUpdateInfo(
+    val tagName: String,
+    val versionName: String,
+    val releaseUrl: String
 )
 
 enum class AutoSyncMode {
@@ -89,6 +96,7 @@ class CredentialsStore(context: Context) {
     private val keySeriesSortMode = "series_sort_mode"
     private val keyLibraryLastSeenMillis = "library_last_seen_millis"
     private val keySyncHistory = "sync_history"
+    private val keyDismissedReleaseTag = "dismissed_release_tag"
 
     fun getServerConfig(): ServerConfig? {
         val baseUrl = prefs.getString(keyBaseUrl, null) ?: return null
@@ -247,6 +255,19 @@ class CredentialsStore(context: Context) {
             putString(keySyncHistory, trimmed.joinToString("\n"))
         }
     }
+
+    fun getDismissedReleaseTag(): String? =
+        prefs.getString(keyDismissedReleaseTag, null)
+
+    fun setDismissedReleaseTag(tag: String?) {
+        prefs.edit {
+            if (tag.isNullOrBlank()) {
+                remove(keyDismissedReleaseTag)
+            } else {
+                putString(keyDismissedReleaseTag, tag)
+            }
+        }
+    }
 }
 
 sealed class ConnectionResult {
@@ -312,6 +333,8 @@ interface JellyfinRepository {
     suspend fun syncIncremental(
         scope: SyncScope = SyncScope.All,
         forceFullMovies: Boolean = false,
+        forceFullSeries: Boolean = false,
+        modeLabel: String = "Normal",
         onProgress: (processed: Int, total: Int, phase: SyncProgressPhase) -> Unit
     ): SyncResult
 
@@ -344,6 +367,9 @@ interface JellyfinRepository {
     suspend fun getSyncHistory(): List<String>
     suspend fun getOfflinePostersEnabled(): Boolean
     suspend fun setOfflinePostersEnabled(enabled: Boolean)
+    suspend fun getLatestAppRelease(): AppUpdateInfo?
+    suspend fun getDismissedReleaseTag(): String?
+    suspend fun setDismissedReleaseTag(tag: String?)
 
     suspend fun clearLocalData(scope: ClearDataScope = ClearDataScope.All)
 
@@ -361,6 +387,8 @@ class DefaultJellyfinRepository(
         const val RECENT_MOVIE_DETAILS_LIMIT = 500
         const val POSTER_MOVIES_DIR = "movies"
         const val POSTER_SERIES_DIR = "series"
+        const val GITHUB_LATEST_RELEASE_API = "https://api.github.com/repos/zynerio/BibliotecaJelly/releases/latest"
+        const val GITHUB_RELEASES_URL = "https://github.com/zynerio/BibliotecaJelly/releases"
     }
 
     @Volatile
@@ -555,6 +583,73 @@ class DefaultJellyfinRepository(
 
     override suspend fun setOfflinePostersEnabled(enabled: Boolean) {
         credentialsStore.setOfflinePostersEnabled(enabled)
+    }
+
+    override suspend fun getLatestAppRelease(): AppUpdateInfo? {
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val client = OkHttpClient.Builder()
+                    .connectTimeout(30, TimeUnit.SECONDS)
+                    .readTimeout(30, TimeUnit.SECONDS)
+                    .writeTimeout(30, TimeUnit.SECONDS)
+                    .build()
+
+                val request = Request.Builder()
+                    .url(GITHUB_LATEST_RELEASE_API)
+                    .addHeader("Accept", "application/vnd.github+json")
+                    .addHeader("X-GitHub-Api-Version", "2022-11-28")
+                    .build()
+
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@withContext null
+
+                    val body = response.body?.string().orEmpty()
+                    if (body.isBlank()) return@withContext null
+
+                    val json = JSONObject(body)
+                    val tag = json.optString("tag_name").orEmpty().ifBlank {
+                        json.optString("name").orEmpty()
+                    }
+                    if (tag.isBlank()) return@withContext null
+
+                    val normalizedVersion = tag.removePrefix("v").removePrefix("V")
+                    val releaseHtmlUrl = json.optString("html_url").orEmpty().ifBlank {
+                        GITHUB_RELEASES_URL
+                    }
+
+                    val assets = json.optJSONArray("assets")
+                    var firstAssetUrl: String? = null
+                    var apkAssetUrl: String? = null
+                    if (assets != null) {
+                        for (index in 0 until assets.length()) {
+                            val asset = assets.optJSONObject(index) ?: continue
+                            val assetUrl = asset.optString("browser_download_url").orEmpty()
+                            if (assetUrl.isBlank()) continue
+                            if (firstAssetUrl == null) {
+                                firstAssetUrl = assetUrl
+                            }
+                            if (assetUrl.endsWith(".apk", ignoreCase = true)) {
+                                apkAssetUrl = assetUrl
+                                break
+                            }
+                        }
+                    }
+
+                    AppUpdateInfo(
+                        tagName = tag,
+                        versionName = normalizedVersion,
+                        releaseUrl = apkAssetUrl ?: firstAssetUrl ?: releaseHtmlUrl
+                    )
+                }
+            }.getOrNull()
+        }
+    }
+
+    override suspend fun getDismissedReleaseTag(): String? =
+        credentialsStore.getDismissedReleaseTag()
+
+    override suspend fun setDismissedReleaseTag(tag: String?) {
+        credentialsStore.setDismissedReleaseTag(tag)
     }
 
     override suspend fun clearLocalData(scope: ClearDataScope) {
@@ -1167,6 +1262,8 @@ class DefaultJellyfinRepository(
     override suspend fun syncIncremental(
         scope: SyncScope,
         forceFullMovies: Boolean,
+        forceFullSeries: Boolean,
+        modeLabel: String,
         onProgress: (processed: Int, total: Int, phase: SyncProgressPhase) -> Unit
     ): SyncResult {
         return withContext(Dispatchers.IO) {
@@ -1202,6 +1299,7 @@ class DefaultJellyfinRepository(
                 val syncMovies = scope == SyncScope.All || scope == SyncScope.Movies
                 val syncSeries = scope == SyncScope.All || scope == SyncScope.Series
                 val movieMinDate = if (syncMovies && forceFullMovies) null else lastSyncIso
+                val seriesMinDate = if (syncSeries && forceFullSeries) null else lastSyncIso
 
                 var processed = 0
                 var total: Int
@@ -1338,7 +1436,7 @@ class DefaultJellyfinRepository(
                             userId = userId ?: "",
                             includeItemTypes = "Series",
                             fields = "Genres,DateCreated",
-                            minDateLastSaved = null,
+                            minDateLastSaved = seriesMinDate,
                             startIndex = startIndex,
                             limit = pageSize
                         )
@@ -1394,7 +1492,7 @@ class DefaultJellyfinRepository(
                 credentialsStore.updateLastSync(System.currentTimeMillis())
                 credentialsStore.appendSyncHistory(
                     buildSyncHistoryEntry(
-                        mode = "Normal",
+                        mode = modeLabel,
                         scope = scope,
                         moviesUpdated = totalMovies,
                         movieDetailsUpdated = totalMovieDetails,

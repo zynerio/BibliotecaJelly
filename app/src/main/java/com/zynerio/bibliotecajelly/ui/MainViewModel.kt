@@ -94,7 +94,15 @@ data class LibraryUiState(
 data class MainUiState(
     val config: ConfigUiState = ConfigUiState(),
     val sync: SyncUiState = SyncUiState(),
-    val library: LibraryUiState = LibraryUiState()
+    val library: LibraryUiState = LibraryUiState(),
+    val update: UpdateUiState = UpdateUiState()
+)
+
+data class UpdateUiState(
+    val showDialog: Boolean = false,
+    val latestVersion: String? = null,
+    val releaseUrl: String? = null,
+    val releaseTag: String? = null
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -151,6 +159,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var currentSyncJob: Job? = null
     private val partialSyncWarning =
         "Sincronización cancelada: solo tendrás una sincronización parcial."
+    private val installedVersionName: String by lazy {
+        runCatching {
+            getApplication<Application>()
+                .packageManager
+                .getPackageInfo(getApplication<Application>().packageName, 0)
+                .versionName
+        }.getOrNull().orEmpty().ifBlank { "0.0" }
+    }
 
     init {
         viewModelScope.launch {
@@ -224,6 +240,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             refreshDatabaseSize()
+            checkForAppUpdate()
+        }
+    }
+
+    fun dismissUpdateDialog() {
+        _uiState.value = _uiState.value.copy(
+            update = _uiState.value.update.copy(showDialog = false)
+        )
+    }
+
+    fun postponeUpdateDialog() {
+        val releaseTag = _uiState.value.update.releaseTag
+        dismissUpdateDialog()
+        if (releaseTag.isNullOrBlank()) return
+
+        viewModelScope.launch {
+            repository.setDismissedReleaseTag(releaseTag)
         }
     }
 
@@ -652,6 +685,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         triggerSyncWithScope(SyncScope.Series)
     }
 
+    fun triggerRecentMoviesSync() {
+        triggerSyncWithScope(scope = SyncScope.Movies, onlyRecentAdded = true)
+    }
+
+    fun triggerRecentSeriesSync() {
+        triggerSyncWithScope(scope = SyncScope.Series, onlyRecentAdded = true)
+    }
+
     fun triggerFastSync() {
         triggerFastSyncWithScope(SyncScope.All)
     }
@@ -676,7 +717,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         triggerDetailsSyncWithScope(SyncScope.Series)
     }
 
-    private fun triggerSyncWithScope(scope: SyncScope) {
+    private fun triggerSyncWithScope(scope: SyncScope, onlyRecentAdded: Boolean = false) {
         currentSyncJob?.cancel()
         currentSyncJob = viewModelScope.launch {
             try {
@@ -685,14 +726,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
 
-                val forceFullMovies = scope == SyncScope.All || scope == SyncScope.Movies
+                val forceFullMovies = !onlyRecentAdded && (scope == SyncScope.All || scope == SyncScope.Movies)
+                val forceFullSeries = !onlyRecentAdded && (scope == SyncScope.All || scope == SyncScope.Series)
 
                 _uiState.value = _uiState.value.copy(
                     sync = _uiState.value.sync.copy(
                         isSyncing = true,
                         processed = 0,
                         total = 0,
-                        phaseText = if (forceFullMovies) {
+                        phaseText = if (onlyRecentAdded) {
+                            "Sincronizando últimos añadidos"
+                        } else if (forceFullMovies) {
                             "Refrescando catálogo de películas (completo)"
                         } else {
                             "Sincronizando catálogo"
@@ -703,7 +747,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 val result = repository.syncIncremental(
                     scope = scope,
-                    forceFullMovies = forceFullMovies
+                    forceFullMovies = forceFullMovies,
+                    forceFullSeries = forceFullSeries,
+                    modeLabel = if (onlyRecentAdded) "Últimos añadidos" else "Normal"
                 ) { processed, total, phase ->
                     val phaseText = if (forceFullMovies && phase == SyncProgressPhase.FetchingMoviesCatalog) {
                         "Refrescando catálogo de películas (completo)"
@@ -1150,6 +1196,48 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
         }
+    }
+
+    private suspend fun checkForAppUpdate() {
+        val latestRelease = repository.getLatestAppRelease() ?: return
+        val currentVersion = installedVersionName
+        if (!isVersionNewer(currentVersion, latestRelease.versionName)) return
+
+        val dismissedTag = repository.getDismissedReleaseTag()
+        if (!dismissedTag.isNullOrBlank() && dismissedTag == latestRelease.tagName) return
+
+        _uiState.value = _uiState.value.copy(
+            update = _uiState.value.update.copy(
+                showDialog = true,
+                latestVersion = latestRelease.versionName,
+                releaseUrl = latestRelease.releaseUrl,
+                releaseTag = latestRelease.tagName
+            )
+        )
+    }
+
+    private fun isVersionNewer(current: String, latest: String): Boolean {
+        val currentParts = current.extractVersionParts()
+        val latestParts = latest.extractVersionParts()
+        val maxSize = maxOf(currentParts.size, latestParts.size)
+
+        for (index in 0 until maxSize) {
+            val currentValue = currentParts.getOrElse(index) { 0 }
+            val latestValue = latestParts.getOrElse(index) { 0 }
+            if (latestValue > currentValue) return true
+            if (latestValue < currentValue) return false
+        }
+
+        return false
+    }
+
+    private fun String.extractVersionParts(): List<Int> {
+        val normalized = this.trim().removePrefix("v").removePrefix("V")
+        return Regex("\\d+")
+            .findAll(normalized)
+            .mapNotNull { it.value.toIntOrNull() }
+            .toList()
+            .ifEmpty { listOf(0) }
     }
 
     private fun SyncProgressPhase.toUiText(): String {
