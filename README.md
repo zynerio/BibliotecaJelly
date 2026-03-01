@@ -240,6 +240,7 @@ En `DefaultJellyfinRepository.syncIncremental`:
   - `getItems(userId, IncludeItemTypes = "Movie", ...)`
   - `getItems(userId, IncludeItemTypes = "Series,Season,Episode", ...)`
 - Solo se procesan los elementos cambiados desde la última sincronización.
+- En modo “solo nuevos”, si todavía no existe una sincronización previa (`lastSyncEpochMillis` vacío), se realiza una carga completa inicial del catálogo para establecer la base incremental.
 - Al finalizar, actualiza el timestamp de última sincronización.
 
 ### Progreso y logs
