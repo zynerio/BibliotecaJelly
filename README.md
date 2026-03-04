@@ -1,6 +1,10 @@
 # Biblioteca Jelly (Cliente offline para Jellyfin)
 
-Aplicación Android nativa desarrollada en Kotlin/Jetpack Compose que actúa como biblioteca de consulta offline para un servidor Jellyfin. Importa los metadatos de películas y series, los almacena en una base de datos local y permite consultarlos sin conexión.
+Aplicación Android nativa desarrollada en Kotlin/Jetpack Compose que actúa como biblioteca de consulta offline 
+para un servidor Jellyfin. 
+Importa los metadatos de películas y series, los almacena en una base de datos local y permite consultarlos sin conexión.
+
+![cap2](https://github.com/user-attachments/assets/a139459e-7605-4592-b59b-a579d20b7f24)
 
 ## Changelog interno
 
@@ -20,14 +24,14 @@ Aplicación Android nativa desarrollada en Kotlin/Jetpack Compose que actúa com
 ### v1.5
 
 - Nueva sincronización específica de **últimos añadidos**:
-  - `Películas (últimos añadidos)`
-  - `Series (últimos añadidos)`
+  - `Solo películas (últimos añadidos)`
+  - `Solo series (últimos añadidos)`
 - Esta opción evita refrescar todo el catálogo para traer únicamente lo nuevo.
 - Aviso automático de nueva versión:
   - popup al detectar release más reciente en GitHub,
   - botón directo para descargar la actualización,
   - opción “Más tarde” para ocultar ese aviso hasta la siguiente release.
-- Se mantiene el resto de modos existentes (Normal, Rápida y Detalles).
+- Se mantiene el resto de modos existentes (Normal, Rápida y Solo detalles).
 - Versión de aplicación actualizada a `1.5` (`versionCode = 5`).
 
 ### v1.4
@@ -73,7 +77,7 @@ Aplicación Android nativa desarrollada en Kotlin/Jetpack Compose que actúa com
 
 ## Estado
 
-- Versión actual: **1.6**
+- Versión actual: **1.5**
 - Android mínimo: **7.0 (API 24)**
 - Stack principal: **Kotlin + Jetpack Compose + Material 3**
 
@@ -87,10 +91,6 @@ Aplicación Android nativa desarrollada en Kotlin/Jetpack Compose que actúa com
 - Historial de actualizaciones visible desde opciones y desde la fecha de última actualización.
 - Botón “Probar conexión” en configuración.
 - Filtros combinables por géneros y detalles técnicos.
-
-## Texto de release (v1.6)
-
-Biblioteca Jelly 1.6 mejora la estabilidad de la configuración inicial. El botón de configuración pasa a “Guardar” y la validación de conexión se realiza en segundo plano con timeout para evitar bloqueos cuando no hay red o el servidor no responde. Además, se corrige un caso intermitente en el primer guardado que podía mostrar credenciales inválidas aun siendo correctas. En resumen: misma configuración, menos fricción y mejor fiabilidad al primer arranque.
 
 ### Base consolidada (v1.3)
 
@@ -455,4 +455,5 @@ Se pueden añadir más pruebas que instancien `DefaultJellyfinRepository` con do
 6. El APK firmado quedará disponible en `app/build/outputs/apk/release/`.
 
 Este APK puede instalarse directamente en dispositivos Android compatibles.
+
 
