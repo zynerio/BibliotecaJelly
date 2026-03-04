@@ -4,7 +4,7 @@ Aplicación Android nativa desarrollada en Kotlin/Jetpack Compose que actúa com
 para un servidor Jellyfin. 
 Importa los metadatos de películas y series, los almacena en una base de datos local y permite consultarlos sin conexión.
 
-![cap2](https://github.com/user-attachments/assets/a139459e-7605-4592-b59b-a579d20b7f24)
+![cap2](https://github.com/user-attachments/assets/0a20e7e9-a469-408f-a381-f2f4a27c7b4d)
 
 ## Changelog interno
 
