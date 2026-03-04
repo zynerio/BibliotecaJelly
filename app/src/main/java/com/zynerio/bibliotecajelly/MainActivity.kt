@@ -158,7 +158,7 @@ fun BibliotecaJellyApp(viewModel: MainViewModel) {
                 onDownloadPostersOfflineChanged = viewModel::onDownloadPostersOfflineChanged,
                 onClearLocalData = viewModel::clearLocalData,
                 onTestConnection = viewModel::testConnection,
-                onSaveAndValidate = viewModel::saveAndValidateConfig,
+                onSave = viewModel::saveConfig,
                 onCancel = viewModel::cancelConfigChanges,
                 modifier = Modifier.padding(innerPadding)
             )
@@ -248,7 +248,7 @@ fun ConfigScreen(
     onDownloadPostersOfflineChanged: (Boolean) -> Unit,
     onClearLocalData: (ClearDataScope) -> Unit,
     onTestConnection: ((Boolean, String) -> Unit) -> Unit,
-    onSaveAndValidate: () -> Unit,
+    onSave: () -> Unit,
     onCancel: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -260,7 +260,7 @@ fun ConfigScreen(
             context.packageManager
                 .getPackageInfo(context.packageName, 0)
                 .versionName
-        }.getOrNull().orEmpty().ifBlank { "1.5" }
+        }.getOrNull().orEmpty().ifBlank { "1.6" }
     }
     val showClearDialog = remember { mutableStateOf(false) }
     val clearConfirmText = remember { mutableStateOf("") }
@@ -502,11 +502,11 @@ fun ConfigScreen(
                 Text("Cancelar")
             }
             Button(
-                onClick = onSaveAndValidate,
+                onClick = onSave,
                 enabled = !config.isValidating,
                 modifier = Modifier.weight(1f)
             ) {
-                Text(if (config.isValidating) "Validando..." else "Guardar y validar")
+                Text(if (config.isValidating) "Validando..." else "Guardar")
             }
         }
 

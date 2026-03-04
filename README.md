@@ -1,24 +1,33 @@
 # Biblioteca Jelly (Cliente offline para Jellyfin)
 
-Aplicación Android nativa desarrollada en Kotlin/Jetpack Compose que actúa como biblioteca de consulta offline 
-para un servidor Jellyfin. 
-Importa los metadatos de películas y series, los almacena en una base de datos local y permite consultarlos sin conexión.
-
-![img1confi](https://github.com/user-attachments/assets/9be305ab-ad2f-40a4-8c22-25e6c06c0fc9)
+Aplicación Android nativa desarrollada en Kotlin/Jetpack Compose que actúa como biblioteca de consulta offline para un servidor Jellyfin. Importa los metadatos de películas y series, los almacena en una base de datos local y permite consultarlos sin conexión.
 
 ## Changelog interno
+
+### v1.6
+
+- Configuración de servidor más robusta:
+  - el botón pasa a **Guardar**,
+  - la configuración se guarda siempre aunque no haya conexión.
+- Validación de conexión no bloqueante:
+  - comprobación en segundo plano con timeout,
+  - evita cuelgues de la app cuando el servidor no está disponible.
+- Corrección de autenticación inicial intermitente:
+  - se evita enviar token en `AuthenticateByName`,
+  - normalización de usuario/API key para reducir falsos errores de credenciales.
+- Versión de aplicación actualizada a `1.6` (`versionCode = 6`).
 
 ### v1.5
 
 - Nueva sincronización específica de **últimos añadidos**:
-  - `Solo películas (últimos añadidos)`
-  - `Solo series (últimos añadidos)`
+  - `Películas (últimos añadidos)`
+  - `Series (últimos añadidos)`
 - Esta opción evita refrescar todo el catálogo para traer únicamente lo nuevo.
 - Aviso automático de nueva versión:
   - popup al detectar release más reciente en GitHub,
   - botón directo para descargar la actualización,
   - opción “Más tarde” para ocultar ese aviso hasta la siguiente release.
-- Se mantiene el resto de modos existentes (Normal, Rápida y Solo detalles).
+- Se mantiene el resto de modos existentes (Normal, Rápida y Detalles).
 - Versión de aplicación actualizada a `1.5` (`versionCode = 5`).
 
 ### v1.4
@@ -64,20 +73,24 @@ Importa los metadatos de películas y series, los almacena en una base de datos 
 
 ## Estado
 
-- Versión actual: **1.5**
+- Versión actual: **1.6**
 - Android mínimo: **7.0 (API 24)**
 - Stack principal: **Kotlin + Jetpack Compose + Material 3**
 
-## Funcionalidades destacadas (v1.5)
+## Funcionalidades destacadas (v1.6)
 
 ### Novedades de la versión
 
 - Sincronización de “últimos añadidos” para películas y series sin refresco completo.
 - Aviso in-app de actualización al detectar una release más reciente en GitHub.
-- Modos de sincronización separados (normal / rápida / solo detalles).
+- Modos de sincronización separados (normal / rápida / detalles).
 - Historial de actualizaciones visible desde opciones y desde la fecha de última actualización.
 - Botón “Probar conexión” en configuración.
 - Filtros combinables por géneros y detalles técnicos.
+
+## Texto de release (v1.6)
+
+Biblioteca Jelly 1.6 mejora la estabilidad de la configuración inicial. El botón de configuración pasa a “Guardar” y la validación de conexión se realiza en segundo plano con timeout para evitar bloqueos cuando no hay red o el servidor no responde. Además, se corrige un caso intermitente en el primer guardado que podía mostrar credenciales inválidas aun siendo correctas. En resumen: misma configuración, menos fricción y mejor fiabilidad al primer arranque.
 
 ### Base consolidada (v1.3)
 
@@ -121,8 +134,6 @@ Importa los metadatos de películas y series, los almacena en una base de datos 
 - **Sincronización en segundo plano**: WorkManager
 - **Cifrado de credenciales**: EncryptedSharedPreferences (androidx.security.crypto)
 - **Imágenes**: Glide con caché local
-
-<img width="1354" height="838" alt="img2ptablet" src="https://github.com/user-attachments/assets/7e880645-8f69-4189-8e89-2f573649b9cf" />
 
 ### Capas principales
 
@@ -431,7 +442,8 @@ Se pueden añadir más pruebas que instancien `DefaultJellyfinRepository` con do
    - Introducir dirección IP o dominio del servidor Jellyfin.
    - Introducir puerto (por defecto suele ser `8096` para HTTP).
    - Rellenar usuario/contraseña o API key.
-   - Pulsar “Guardar y validar” para comprobar la conexión y lanzar la primera sincronización.
+  - Pulsar “Guardar” para guardar la configuración.
+  - La app valida la conexión en segundo plano (sin bloquear); si no hay red, la configuración queda guardada y podrás reintentar desde “Probar conexión” o al sincronizar.
 
 ## Generar APK firmado
 
@@ -443,5 +455,4 @@ Se pueden añadir más pruebas que instancien `DefaultJellyfinRepository` con do
 6. El APK firmado quedará disponible en `app/build/outputs/apk/release/`.
 
 Este APK puede instalarse directamente en dispositivos Android compatibles.
-
 

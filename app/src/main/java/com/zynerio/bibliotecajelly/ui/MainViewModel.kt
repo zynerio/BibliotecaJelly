@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.net.URI
 import java.text.SimpleDateFormat
@@ -608,7 +609,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun saveAndValidateConfig() {
+    fun saveConfig() {
         val state = _uiState.value.config
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
@@ -632,40 +633,92 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             repository.setListDisplayMode(state.listDisplayMode)
             repository.setOfflinePostersEnabled(state.downloadPostersOffline)
 
-            when (val result = repository.authenticateAndValidateConnection()) {
+            _uiState.value = _uiState.value.copy(
+                config = _uiState.value.config.copy(
+                    isValidating = false,
+                    validationError = null,
+                    isConfigured = true
+                )
+            )
+
+            val status = withTimeoutOrNull(12_000L) {
+                repository.checkServerStatus()
+            } ?: ConnectionResult.NetworkError("Tiempo de conexión agotado al validar el servidor")
+
+            when (status) {
                 ConnectionResult.Success -> {
                     _uiState.value = _uiState.value.copy(
-                        config = _uiState.value.config.copy(
-                            isValidating = false,
-                            validationError = null,
-                            isConfigured = true
+                        sync = _uiState.value.sync.copy(
+                            serverStatusText = "Servidor: activo",
+                            isServerActive = true,
+                            lastError = null
+                        )
+                    )
+
+                    if (state.apiKey.isBlank()) {
+                        when (val auth = withTimeoutOrNull(15_000L) {
+                            repository.authenticateAndValidateConnection()
+                        } ?: ConnectionResult.NetworkError("Tiempo de conexión agotado al validar credenciales")) {
+                            ConnectionResult.Success -> Unit
+                            is ConnectionResult.AuthFailure -> {
+                                _uiState.value = _uiState.value.copy(
+                                    sync = _uiState.value.sync.copy(
+                                        serverStatusText = "Servidor: activo (sin autenticar)",
+                                        isServerActive = true,
+                                        lastError = auth.message
+                                    )
+                                )
+                            }
+
+                            is ConnectionResult.NetworkError -> {
+                                _uiState.value = _uiState.value.copy(
+                                    sync = _uiState.value.sync.copy(
+                                        serverStatusText = "Servidor: activo (sin autenticar)",
+                                        isServerActive = true,
+                                        lastError = auth.message
+                                    )
+                                )
+                            }
+
+                            is ConnectionResult.UnknownError -> {
+                                _uiState.value = _uiState.value.copy(
+                                    sync = _uiState.value.sync.copy(
+                                        serverStatusText = "Servidor: activo (sin autenticar)",
+                                        isServerActive = true,
+                                        lastError = auth.message
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+
+                is ConnectionResult.NetworkError -> {
+                    _uiState.value = _uiState.value.copy(
+                        sync = _uiState.value.sync.copy(
+                            serverStatusText = "Servidor: inactivo",
+                            isServerActive = false,
+                            lastError = status.message
                         )
                     )
                 }
 
                 is ConnectionResult.AuthFailure -> {
                     _uiState.value = _uiState.value.copy(
-                        config = _uiState.value.config.copy(
-                            isValidating = false,
-                            validationError = result.message
-                        )
-                    )
-                }
-
-                is ConnectionResult.NetworkError -> {
-                    _uiState.value = _uiState.value.copy(
-                        config = _uiState.value.config.copy(
-                            isValidating = false,
-                            validationError = result.message
+                        sync = _uiState.value.sync.copy(
+                            serverStatusText = "Servidor: configuración incompleta",
+                            isServerActive = false,
+                            lastError = status.message
                         )
                     )
                 }
 
                 is ConnectionResult.UnknownError -> {
                     _uiState.value = _uiState.value.copy(
-                        config = _uiState.value.config.copy(
-                            isValidating = false,
-                            validationError = result.message
+                        sync = _uiState.value.sync.copy(
+                            serverStatusText = "Servidor: estado desconocido",
+                            isServerActive = false,
+                            lastError = status.message
                         )
                     )
                 }
@@ -1005,7 +1058,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun testConnection(onResult: (Boolean, String) -> Unit) {
         viewModelScope.launch {
-            when (val status = repository.checkServerStatus()) {
+            when (val status = withTimeoutOrNull(12_000L) {
+                repository.checkServerStatus()
+            } ?: ConnectionResult.NetworkError("Tiempo de conexión agotado al validar el servidor")) {
                 ConnectionResult.Success -> {
                     _uiState.value = _uiState.value.copy(
                         sync = _uiState.value.sync.copy(

@@ -483,9 +483,9 @@ class DefaultJellyfinRepository(
         val baseUrl = buildNormalizedBaseUrl(serverAddress, port)
         credentialsStore.saveServerConfig(
             baseUrl = baseUrl,
-            username = username?.takeIf { it.isNotBlank() },
+            username = username?.trim()?.takeIf { it.isNotBlank() },
             password = password?.takeIf { it.isNotBlank() },
-            apiKey = apiKey?.takeIf { it.isNotBlank() }
+            apiKey = apiKey?.trim()?.takeIf { it.isNotBlank() }
         )
     }
 
@@ -949,7 +949,7 @@ class DefaultJellyfinRepository(
                     return@withContext ConnectionResult.Success
                 }
 
-                val username = config.username
+                val username = config.username?.trim()
                 val password = config.password
                 if (username.isNullOrBlank()) {
                     return@withContext ConnectionResult.AuthFailure("Usuario requerido")
@@ -1836,6 +1836,7 @@ private class AuthorizationInterceptor(
 ) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): okhttp3.Response {
         val original = chain.request()
+        val isAuthenticateByName = original.url.encodedPath.endsWith("/Users/AuthenticateByName")
         val config = credentialsStore.getServerConfig()
 
         val token = config?.accessToken
@@ -1858,7 +1859,7 @@ private class AuthorizationInterceptor(
             else -> null
         }
 
-        if (!effectiveToken.isNullOrBlank()) {
+        if (!isAuthenticateByName && !effectiveToken.isNullOrBlank()) {
             builder.addHeader("X-Emby-Token", effectiveToken)
         }
 
