@@ -8,6 +8,19 @@ Importa los metadatos de películas y series, los almacena en una base de datos 
 
 ## Changelog interno
 
+### v1.6
+
+- Configuración de servidor más robusta:
+  - el botón pasa a **Guardar**,
+  - la configuración se guarda siempre aunque no haya conexión.
+- Validación de conexión no bloqueante:
+  - comprobación en segundo plano con timeout,
+  - evita cuelgues de la app cuando el servidor no está disponible.
+- Corrección de autenticación inicial intermitente:
+  - se evita enviar token en `AuthenticateByName`,
+  - normalización de usuario/API key para reducir falsos errores de credenciales.
+- Versión de aplicación actualizada a `1.6` (`versionCode = 6`).
+
 ### v1.5
 
 - Nueva sincronización específica de **últimos añadidos**:
@@ -68,13 +81,13 @@ Importa los metadatos de películas y series, los almacena en una base de datos 
 - Android mínimo: **7.0 (API 24)**
 - Stack principal: **Kotlin + Jetpack Compose + Material 3**
 
-## Funcionalidades destacadas (v1.5)
+## Funcionalidades destacadas (v1.6)
 
 ### Novedades de la versión
 
 - Sincronización de “últimos añadidos” para películas y series sin refresco completo.
 - Aviso in-app de actualización al detectar una release más reciente en GitHub.
-- Modos de sincronización separados (normal / rápida / solo detalles).
+- Modos de sincronización separados (normal / rápida / detalles).
 - Historial de actualizaciones visible desde opciones y desde la fecha de última actualización.
 - Botón “Probar conexión” en configuración.
 - Filtros combinables por géneros y detalles técnicos.
@@ -121,8 +134,6 @@ Importa los metadatos de películas y series, los almacena en una base de datos 
 - **Sincronización en segundo plano**: WorkManager
 - **Cifrado de credenciales**: EncryptedSharedPreferences (androidx.security.crypto)
 - **Imágenes**: Glide con caché local
-
-<img width="1354" height="838" alt="img2ptablet" src="https://github.com/user-attachments/assets/7e880645-8f69-4189-8e89-2f573649b9cf" />
 
 ### Capas principales
 
@@ -431,7 +442,8 @@ Se pueden añadir más pruebas que instancien `DefaultJellyfinRepository` con do
    - Introducir dirección IP o dominio del servidor Jellyfin.
    - Introducir puerto (por defecto suele ser `8096` para HTTP).
    - Rellenar usuario/contraseña o API key.
-   - Pulsar “Guardar y validar” para comprobar la conexión y lanzar la primera sincronización.
+  - Pulsar “Guardar” para guardar la configuración.
+  - La app valida la conexión en segundo plano (sin bloquear); si no hay red, la configuración queda guardada y podrás reintentar desde “Probar conexión” o al sincronizar.
 
 ## Generar APK firmado
 
