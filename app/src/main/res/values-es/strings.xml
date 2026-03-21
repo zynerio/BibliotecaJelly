@@ -188,4 +188,5 @@
     <string name="library_cover_no_candidates">Todavía no hay pósters disponibles en esta biblioteca para elegir.</string>
     <string name="library_cover_hint">Mantén pulsada una tarjeta de biblioteca para cambiar su portada.</string>
     <string name="got_it">Entendido</string>
+    <string name="press_back_again_to_exit">Pulsa atrás otra vez para salir</string>
 </resources>

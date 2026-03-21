@@ -60,6 +60,7 @@ data class ConfigUiState(
     val apiKey: String = "",
     val isValidating: Boolean = false,
     val validationError: String? = null,
+    val hasSavedConfig: Boolean = false,
     val isConfigured: Boolean = false,
     val databaseSizeText: String = "",
     val postersSizeText: String = "",
@@ -246,6 +247,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         username = config.username.orEmpty(),
                         password = config.password.orEmpty(),
                         apiKey = config.apiKey.orEmpty(),
+                        hasSavedConfig = true,
                         isConfigured = true,
                         downloadPostersOffline = offlinePostersEnabled,
                         showFilePath = showFilePath,
@@ -756,6 +758,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 config = _uiState.value.config.copy(
                     isValidating = false,
                     validationError = null,
+                    hasSavedConfig = true,
                     isConfigured = true
                 )
             )

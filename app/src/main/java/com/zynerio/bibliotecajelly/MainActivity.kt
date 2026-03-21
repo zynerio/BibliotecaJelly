@@ -1,8 +1,11 @@
 package com.zynerio.bibliotecajelly
 
+import android.app.Activity
 import android.os.Bundle
+import android.widget.Toast
 import android.widget.ImageView
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
@@ -60,6 +63,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -291,6 +295,7 @@ fun ConfigScreen(
 ) {
     val config = uiState.config
     val context = LocalContext.current
+    val activity = context as? Activity
     val uriHandler = LocalUriHandler.current
     val appVersion = remember(context) {
         runCatching {
@@ -309,6 +314,31 @@ fun ConfigScreen(
     val connectionDialogTitle = remember { mutableStateOf("") }
     val connectionDialogMessage = remember { mutableStateOf("") }
     val showSyncHistoryDialog = remember { mutableStateOf(false) }
+    val pressBackAgainMessage = stringResource(R.string.press_back_again_to_exit)
+    val lastBackPressAt = remember { mutableLongStateOf(0L) }
+
+    BackHandler {
+        when {
+            showClearDialog.value -> {
+                showClearDialog.value = false
+                clearConfirmText.value = ""
+                clearScope.value = ClearDataScope.All
+            }
+
+            showConnectionDialog.value -> showConnectionDialog.value = false
+            showSyncHistoryDialog.value -> showSyncHistoryDialog.value = false
+            config.hasSavedConfig -> onCancel()
+            else -> {
+                val now = System.currentTimeMillis()
+                if (now - lastBackPressAt.longValue < 2000L) {
+                    activity?.finish()
+                } else {
+                    lastBackPressAt.longValue = now
+                    Toast.makeText(context, pressBackAgainMessage, Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
 
     LaunchedEffect(showClearSuccess.value) {
         if (showClearSuccess.value) {
@@ -818,6 +848,10 @@ fun LibraryScreen(
 ) {
     val sync = uiState.sync
     val library = uiState.library
+    val context = LocalContext.current
+    val activity = context as? Activity
+    val pressBackAgainMessage = stringResource(R.string.press_back_again_to_exit)
+    val lastBackPressAt = remember { mutableLongStateOf(0L) }
 
     val selectedMovieId = remember { mutableStateOf<String?>(null) }
     val movieRefreshInProgress = remember { mutableStateOf(false) }
@@ -1140,6 +1174,27 @@ fun LibraryScreen(
     val movieNovedadesLabel = if (novedadesMoviesCount > 99) "99+" else novedadesMoviesCount.toString()
     val seriesNovedadesLabel = if (novedadesSeriesCount > 99) "99+" else novedadesSeriesCount.toString()
     val othersNovedadesLabel = if (novedadesOthersCount > 99) "99+" else novedadesOthersCount.toString()
+
+    BackHandler {
+        when {
+            selectedLibraryForCoverDialog.value != null -> selectedLibraryForCoverDialog.value = null
+            selectedMovieId.value != null -> selectedMovieId.value = null
+            selectedSeries.value != null -> selectedSeries.value = null
+            selectedOtherGroupType.value != null -> selectedOtherGroupType.value = null
+            showSyncDialog.value -> showSyncDialog.value = false
+            showSyncHistoryDialog.value -> showSyncHistoryDialog.value = false
+            isAdvancedLibraryView -> selectedAdvancedLibrary.value = null
+            else -> {
+                val now = System.currentTimeMillis()
+                if (now - lastBackPressAt.longValue < 2000L) {
+                    activity?.finish()
+                } else {
+                    lastBackPressAt.longValue = now
+                    Toast.makeText(context, pressBackAgainMessage, Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
 
     Column(
         modifier = modifier.fillMaxSize()
