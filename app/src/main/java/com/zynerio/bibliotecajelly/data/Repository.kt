@@ -3,16 +3,13 @@ package com.zynerio.bibliotecajelly.data
 import android.content.Context
 import android.os.Build
 import android.util.Log
+import com.zynerio.bibliotecajelly.R
 import androidx.core.content.edit
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
-import androidx.work.ExistingWorkPolicy
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkManager
 import kotlinx.coroutines.CancellationException
-import com.zynerio.bibliotecajelly.data.sync.JellyfinSyncWorker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -25,7 +22,7 @@ import org.json.JSONObject
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import java.io.File
-import java.time.Instant
+import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
@@ -45,6 +42,12 @@ data class AppUpdateInfo(
     val tagName: String,
     val versionName: String,
     val releaseUrl: String
+)
+
+data class LibraryViewInfo(
+    val id: String,
+    val name: String,
+    val imageUrl: String?
 )
 
 enum class AutoSyncMode {
@@ -97,6 +100,10 @@ class CredentialsStore(context: Context) {
     private val keyLibraryLastSeenMillis = "library_last_seen_millis"
     private val keySyncHistory = "sync_history"
     private val keyDismissedReleaseTag = "dismissed_release_tag"
+    private val keyShowFilePath = "show_file_path"
+    private val keyLibrariesAdvancedView = "libraries_advanced_view"
+    private val keyLibraryCoverOverrides = "library_cover_overrides"
+    private val keyLibraryCoverHintDismissed = "library_cover_hint_dismissed"
 
     fun getServerConfig(): ServerConfig? {
         val baseUrl = prefs.getString(keyBaseUrl, null) ?: return null
@@ -117,11 +124,25 @@ class CredentialsStore(context: Context) {
         password: String?,
         apiKey: String?
     ) {
+        val previousBaseUrl = prefs.getString(keyBaseUrl, null)
+        val previousUsername = prefs.getString(keyUsername, null)
+        val previousPassword = prefs.getString(keyPassword, null)
+        val previousApiKey = prefs.getString(keyApiKey, null)
+
+        val configChanged = previousBaseUrl != baseUrl ||
+            previousUsername != username ||
+            previousPassword != password ||
+            previousApiKey != apiKey
+
         prefs.edit {
             putString(keyBaseUrl, baseUrl)
             putString(keyUsername, username)
             putString(keyPassword, password)
             putString(keyApiKey, apiKey)
+            if (configChanged) {
+                remove(keyAccessToken)
+                remove(keyUserId)
+            }
         }
     }
 
@@ -256,6 +277,80 @@ class CredentialsStore(context: Context) {
         }
     }
 
+    fun clearSyncHistory() {
+        prefs.edit {
+            remove(keySyncHistory)
+        }
+    }
+
+    fun getShowFilePath(): Boolean =
+        prefs.getBoolean(keyShowFilePath, false)
+
+    fun setShowFilePath(enabled: Boolean) {
+        prefs.edit {
+            putBoolean(keyShowFilePath, enabled)
+        }
+    }
+
+    fun getLibrariesAdvancedView(): Boolean =
+        prefs.getBoolean(keyLibrariesAdvancedView, false)
+
+    fun setLibrariesAdvancedView(enabled: Boolean) {
+        prefs.edit {
+            putBoolean(keyLibrariesAdvancedView, enabled)
+        }
+    }
+
+    fun getLibraryCoverOverrides(): Map<String, String> {
+        val raw = prefs.getString(keyLibraryCoverOverrides, null).orEmpty()
+        if (raw.isBlank()) return emptyMap()
+        return runCatching {
+            val json = JSONObject(raw)
+            buildMap {
+                json.keys().forEach { key ->
+                    val value = json.optString(key, "")
+                    if (value.isNotBlank()) {
+                        put(key, value)
+                    }
+                }
+            }
+        }.getOrDefault(emptyMap())
+    }
+
+    fun setLibraryCoverOverride(libraryName: String, imageUrl: String) {
+        val updated = JSONObject().apply {
+            getLibraryCoverOverrides().forEach { (key, value) -> put(key, value) }
+            put(libraryName, imageUrl)
+        }
+        prefs.edit {
+            putString(keyLibraryCoverOverrides, updated.toString())
+        }
+    }
+
+    fun clearLibraryCoverOverride(libraryName: String) {
+        val updated = JSONObject().apply {
+            getLibraryCoverOverrides()
+                .filterKeys { it != libraryName }
+                .forEach { (key, value) -> put(key, value) }
+        }
+        prefs.edit {
+            if (updated.length() == 0) {
+                remove(keyLibraryCoverOverrides)
+            } else {
+                putString(keyLibraryCoverOverrides, updated.toString())
+            }
+        }
+    }
+
+    fun isLibraryCoverHintDismissed(): Boolean =
+        prefs.getBoolean(keyLibraryCoverHintDismissed, false)
+
+    fun setLibraryCoverHintDismissed(dismissed: Boolean) {
+        prefs.edit {
+            putBoolean(keyLibraryCoverHintDismissed, dismissed)
+        }
+    }
+
     fun getDismissedReleaseTag(): String? =
         prefs.getString(keyDismissedReleaseTag, null)
 
@@ -286,7 +381,8 @@ sealed class SyncResult {
 enum class SyncScope {
     All,
     Movies,
-    Series
+    Series,
+    Others
 }
 
 enum class ClearDataScope {
@@ -305,9 +401,11 @@ enum class SyncProgressPhase {
 interface JellyfinRepository {
     val movies: Flow<List<MovieEntity>>
     val series: Flow<List<SeriesEntity>>
+    val others: Flow<List<OtherMediaEntity>>
 
     fun searchMovies(query: String): Flow<List<MovieEntity>>
     fun searchSeries(query: String): Flow<List<SeriesEntity>>
+    fun searchOthers(query: String): Flow<List<OtherMediaEntity>>
 
     fun getSeriesDetails(seriesId: String): Flow<SeriesWithSeasonsAndEpisodes?>
 
@@ -326,14 +424,22 @@ interface JellyfinRepository {
     )
 
     suspend fun getServerConfig(): ServerConfig?
+    suspend fun getLibraryViews(): List<LibraryViewInfo>
+    suspend fun getLibraryCoverOverrides(): Map<String, String>
+    suspend fun setLibraryCoverOverride(libraryName: String, imageUrl: String)
+    suspend fun clearLibraryCoverOverride(libraryName: String)
+    suspend fun isLibraryCoverHintDismissed(): Boolean
+    suspend fun setLibraryCoverHintDismissed(dismissed: Boolean)
 
     suspend fun authenticateAndValidateConnection(): ConnectionResult
     suspend fun checkServerStatus(): ConnectionResult
+    suspend fun checkServerStatus(serverAddress: String, port: String): ConnectionResult
 
     suspend fun syncIncremental(
         scope: SyncScope = SyncScope.All,
         forceFullMovies: Boolean = false,
         forceFullSeries: Boolean = false,
+        forceFullOthers: Boolean = false,
         modeLabel: String = "Normal",
         onProgress: (processed: Int, total: Int, phase: SyncProgressPhase) -> Unit
     ): SyncResult
@@ -365,8 +471,13 @@ interface JellyfinRepository {
     suspend fun getLibraryLastSeenMillis(): Long?
     suspend fun setLibraryLastSeenMillis(epochMillis: Long)
     suspend fun getSyncHistory(): List<String>
+    suspend fun clearSyncHistory()
+    suspend fun getShowFilePath(): Boolean
+    suspend fun setShowFilePath(enabled: Boolean)
     suspend fun getOfflinePostersEnabled(): Boolean
     suspend fun setOfflinePostersEnabled(enabled: Boolean)
+    suspend fun getLibrariesAdvancedView(): Boolean
+    suspend fun setLibrariesAdvancedView(enabled: Boolean)
     suspend fun getLatestAppRelease(): AppUpdateInfo?
     suspend fun getDismissedReleaseTag(): String?
     suspend fun setDismissedReleaseTag(tag: String?)
@@ -397,6 +508,53 @@ class DefaultJellyfinRepository(
     @Volatile
     private var cachedBaseUrl: String? = null
 
+    private val appVersionName: String by lazy {
+        runCatching {
+            val pkgInfo = appContext.packageManager.getPackageInfo(appContext.packageName, 0)
+            pkgInfo.versionName.orEmpty().ifBlank { "1.0.0" }
+        }.getOrDefault("1.0.0")
+    }
+
+    private suspend fun fetchLibrariesById(userId: String): Map<String, String> {
+        if (userId.isBlank()) return emptyMap()
+        return runCatching {
+            getApi().getViews(userId = userId).Items.orEmpty()
+                .filter { it.isLibraryView() }
+                .associate { it.Id to it.Name }
+        }.getOrElse { emptyMap() }
+    }
+
+    private suspend fun fetchLibraryViews(userId: String, baseUrl: String): List<LibraryViewInfo> {
+        if (userId.isBlank()) return emptyList()
+        return runCatching {
+            getApi().getViews(userId = userId).Items.orEmpty()
+                .filter { it.isLibraryView() }
+                .map { dto ->
+                    LibraryViewInfo(
+                        id = dto.Id,
+                        name = dto.Name,
+                        imageUrl = dto.buildPrimaryImageUrl(baseUrl)
+                            ?: "${baseUrl.trimEnd('/')}/Items/${dto.Id}/Images/Primary"
+                    )
+                }
+        }.getOrElse { emptyList() }
+    }
+
+    private fun BaseItemDto.isLibraryView(): Boolean {
+        val isKnownViewType =
+            Type.equals("CollectionFolder", ignoreCase = true) ||
+                Type.equals("UserView", ignoreCase = true)
+        val hasCollectionType = !CollectionType.isNullOrBlank()
+        return isKnownViewType || hasCollectionType
+    }
+
+    private fun BaseItemDto.resolveLibraryId(librariesById: Map<String, String>): String? {
+        ParentId?.let { parent ->
+            if (librariesById.containsKey(parent)) return parent
+        }
+        return AncestorIds.orEmpty().firstOrNull { librariesById.containsKey(it) }
+    }
+
     private fun getApi(): JellyfinApi {
         val baseUrl = credentialsStore.getServerConfig()?.baseUrl ?: "http://127.0.0.1/"
         val existing = cachedApi
@@ -417,7 +575,7 @@ class DefaultJellyfinRepository(
                 .connectTimeout(30, TimeUnit.SECONDS)
                 .readTimeout(120, TimeUnit.SECONDS)
                 .writeTimeout(120, TimeUnit.SECONDS)
-                .addInterceptor(AuthorizationInterceptor(credentialsStore))
+                .addInterceptor(AuthorizationInterceptor(credentialsStore, appVersionName))
                 .addInterceptor(logging)
                 .build()
 
@@ -436,6 +594,7 @@ class DefaultJellyfinRepository(
 
     override val movies: Flow<List<MovieEntity>> = db.movieDao().getAllMovies()
     override val series: Flow<List<SeriesEntity>> = db.seriesDao().getAllSeries()
+    override val others: Flow<List<OtherMediaEntity>> = db.otherMediaDao().getAllOtherMedia()
 
     override fun searchMovies(query: String): Flow<List<MovieEntity>> {
         return if (query.isBlank()) {
@@ -450,6 +609,14 @@ class DefaultJellyfinRepository(
             series
         } else {
             db.seriesDao().searchSeriesByTitle(query)
+        }
+    }
+
+    override fun searchOthers(query: String): Flow<List<OtherMediaEntity>> {
+        return if (query.isBlank()) {
+            others
+        } else {
+            db.otherMediaDao().searchOtherMediaByTitle(query)
         }
     }
 
@@ -525,6 +692,37 @@ class DefaultJellyfinRepository(
     override suspend fun getServerConfig(): ServerConfig? =
         credentialsStore.getServerConfig()
 
+    override suspend fun getLibraryViews(): List<LibraryViewInfo> = withContext(Dispatchers.IO) {
+        val config = credentialsStore.getServerConfig() ?: return@withContext emptyList()
+        fetchLibraryViews(userId = config.userId.orEmpty(), baseUrl = config.baseUrl)
+    }
+
+    override suspend fun getLibraryCoverOverrides(): Map<String, String> = withContext(Dispatchers.IO) {
+        credentialsStore.getLibraryCoverOverrides()
+    }
+
+    override suspend fun setLibraryCoverOverride(libraryName: String, imageUrl: String) {
+        withContext(Dispatchers.IO) {
+            credentialsStore.setLibraryCoverOverride(libraryName, imageUrl)
+        }
+    }
+
+    override suspend fun clearLibraryCoverOverride(libraryName: String) {
+        withContext(Dispatchers.IO) {
+            credentialsStore.clearLibraryCoverOverride(libraryName)
+        }
+    }
+
+    override suspend fun isLibraryCoverHintDismissed(): Boolean = withContext(Dispatchers.IO) {
+        credentialsStore.isLibraryCoverHintDismissed()
+    }
+
+    override suspend fun setLibraryCoverHintDismissed(dismissed: Boolean) {
+        withContext(Dispatchers.IO) {
+            credentialsStore.setLibraryCoverHintDismissed(dismissed)
+        }
+    }
+
     override suspend fun getAutoSyncMode(): AutoSyncMode =
         credentialsStore.getAutoSyncMode()
 
@@ -578,11 +776,29 @@ class DefaultJellyfinRepository(
     override suspend fun getSyncHistory(): List<String> =
         credentialsStore.getSyncHistory()
 
+    override suspend fun clearSyncHistory() {
+        credentialsStore.clearSyncHistory()
+    }
+
+    override suspend fun getShowFilePath(): Boolean =
+        credentialsStore.getShowFilePath()
+
+    override suspend fun setShowFilePath(enabled: Boolean) {
+        credentialsStore.setShowFilePath(enabled)
+    }
+
     override suspend fun getOfflinePostersEnabled(): Boolean =
         credentialsStore.getOfflinePostersEnabled()
 
     override suspend fun setOfflinePostersEnabled(enabled: Boolean) {
         credentialsStore.setOfflinePostersEnabled(enabled)
+    }
+
+    override suspend fun getLibrariesAdvancedView(): Boolean =
+        credentialsStore.getLibrariesAdvancedView()
+
+    override suspend fun setLibrariesAdvancedView(enabled: Boolean) {
+        credentialsStore.setLibrariesAdvancedView(enabled)
     }
 
     override suspend fun getLatestAppRelease(): AppUpdateInfo? {
@@ -592,6 +808,7 @@ class DefaultJellyfinRepository(
                     .connectTimeout(30, TimeUnit.SECONDS)
                     .readTimeout(30, TimeUnit.SECONDS)
                     .writeTimeout(30, TimeUnit.SECONDS)
+                    .addInterceptor(AuthorizationInterceptor(credentialsStore, appVersionName))
                     .build()
 
                 val request = Request.Builder()
@@ -660,6 +877,7 @@ class DefaultJellyfinRepository(
                     db.seriesDao().clearEpisodes()
                     db.seriesDao().clearSeasons()
                     db.seriesDao().clearSeries()
+                    db.otherMediaDao().clearAll()
                     clearPosterDirectory(POSTER_MOVIES_DIR)
                     clearPosterDirectory(POSTER_SERIES_DIR)
                 }
@@ -705,7 +923,7 @@ class DefaultJellyfinRepository(
                 .connectTimeout(30, TimeUnit.SECONDS)
                 .readTimeout(120, TimeUnit.SECONDS)
                 .writeTimeout(120, TimeUnit.SECONDS)
-                .addInterceptor(AuthorizationInterceptor(credentialsStore))
+                .addInterceptor(AuthorizationInterceptor(credentialsStore, appVersionName))
                 .build()
 
             val request = Request.Builder().url(remoteUrl).build()
@@ -730,7 +948,7 @@ class DefaultJellyfinRepository(
                 return@withContext
             }
 
-            val fields = "MediaStreams,MediaSources,Width,Height"
+            val fields = "MediaStreams,MediaSources,Width,Height,Path,ProductionYear"
 
             val api = getApi()
 
@@ -909,7 +1127,7 @@ class DefaultJellyfinRepository(
                 return@withContext
             }
 
-            val detailFields = "MediaStreams,MediaSources,Width,Height,Genres,DateCreated"
+            val detailFields = "MediaStreams,MediaSources,Width,Height,Genres,DateCreated,Path,ProductionYear"
             val offlinePostersEnabled = credentialsStore.getOfflinePostersEnabled()
             val api = getApi()
 
@@ -941,10 +1159,10 @@ class DefaultJellyfinRepository(
     override suspend fun authenticateAndValidateConnection(): ConnectionResult {
         return withContext(Dispatchers.IO) {
             val config = credentialsStore.getServerConfig()
-                ?: return@withContext ConnectionResult.AuthFailure("Configuración del servidor incompleta")
+                ?: return@withContext ConnectionResult.AuthFailure(appContext.getString(R.string.error_server_config_incomplete))
 
             try {
-                Log.d("JellyfinAuth", "Validando conexión con ${config.baseUrl}")
+                Log.d("JellyfinAuth", "Validating connection to ${config.baseUrl}")
                 if (!config.apiKey.isNullOrBlank()) {
                     return@withContext ConnectionResult.Success
                 }
@@ -952,7 +1170,7 @@ class DefaultJellyfinRepository(
                 val username = config.username?.trim()
                 val password = config.password
                 if (username.isNullOrBlank()) {
-                    return@withContext ConnectionResult.AuthFailure("Usuario requerido")
+                    return@withContext ConnectionResult.AuthFailure(appContext.getString(R.string.error_username_required))
                 }
 
                 val authResult = getApi().authenticateByName(
@@ -961,7 +1179,7 @@ class DefaultJellyfinRepository(
                         Pw = password.orEmpty()
                     )
                 )
-                Log.d("JellyfinAuth", "Autenticación correcta para usuario $username")
+                Log.d("JellyfinAuth", "Authentication successful for user $username")
                 credentialsStore.updateAuth(
                     accessToken = authResult.AccessToken,
                     userId = authResult.User.Id
@@ -969,7 +1187,7 @@ class DefaultJellyfinRepository(
                 ConnectionResult.Success
             } catch (e: retrofit2.HttpException) {
                 if (e.code() == 401) {
-                    ConnectionResult.AuthFailure("Auth 401: usuario o contraseña incorrectos")
+                    ConnectionResult.AuthFailure(appContext.getString(R.string.error_auth_401_user_pass))
                 } else {
                     ConnectionResult.NetworkError(httpDiagnosticMessage(e))
                 }
@@ -990,14 +1208,54 @@ class DefaultJellyfinRepository(
     override suspend fun checkServerStatus(): ConnectionResult {
         return withContext(Dispatchers.IO) {
             val config = credentialsStore.getServerConfig()
-                ?: return@withContext ConnectionResult.AuthFailure("Configuración del servidor incompleta")
+                ?: return@withContext ConnectionResult.AuthFailure(appContext.getString(R.string.error_server_config_incomplete))
 
             if (config.baseUrl.isBlank()) {
-                return@withContext ConnectionResult.AuthFailure("Configuración del servidor incompleta")
+                return@withContext ConnectionResult.AuthFailure(appContext.getString(R.string.error_server_config_incomplete))
             }
 
             try {
                 getApi().pingServer()
+                ConnectionResult.Success
+            } catch (e: java.net.SocketTimeoutException) {
+                ConnectionResult.NetworkError(networkDiagnosticMessage(e))
+            } catch (e: java.net.UnknownHostException) {
+                ConnectionResult.NetworkError(networkDiagnosticMessage(e))
+            } catch (e: java.net.ConnectException) {
+                ConnectionResult.NetworkError(networkDiagnosticMessage(e))
+            } catch (e: javax.net.ssl.SSLException) {
+                ConnectionResult.NetworkError(networkDiagnosticMessage(e))
+            } catch (_: retrofit2.HttpException) {
+                ConnectionResult.Success
+            } catch (e: Exception) {
+                ConnectionResult.UnknownError(networkDiagnosticMessage(e))
+            }
+        }
+    }
+
+    override suspend fun checkServerStatus(serverAddress: String, port: String): ConnectionResult {
+        return withContext(Dispatchers.IO) {
+            val baseUrl = buildNormalizedBaseUrl(serverAddress, port)
+
+            if (serverAddress.trim().isBlank()) {
+                return@withContext ConnectionResult.AuthFailure(appContext.getString(R.string.error_server_config_incomplete))
+            }
+
+            try {
+                val client = OkHttpClient.Builder()
+                    .connectTimeout(30, TimeUnit.SECONDS)
+                    .readTimeout(120, TimeUnit.SECONDS)
+                    .writeTimeout(120, TimeUnit.SECONDS)
+                    .build()
+
+                val tempApi = Retrofit.Builder()
+                    .baseUrl(baseUrl)
+                    .client(client)
+                    .addConverterFactory(GsonConverterFactory.create())
+                    .build()
+                    .create(JellyfinApi::class.java)
+
+                tempApi.pingServer()
                 ConnectionResult.Success
             } catch (e: java.net.SocketTimeoutException) {
                 ConnectionResult.NetworkError(networkDiagnosticMessage(e))
@@ -1021,154 +1279,186 @@ class DefaultJellyfinRepository(
     ): SyncResult {
         return withContext(Dispatchers.IO) {
             val config = credentialsStore.getServerConfig()
-                ?: return@withContext SyncResult.NetworkError("Configuración del servidor no encontrada")
+                ?: return@withContext SyncResult.NetworkError(appContext.getString(R.string.error_server_config_not_found))
 
             val userId = config.userId
             if (userId.isNullOrBlank() && config.apiKey.isNullOrBlank()) {
-                return@withContext SyncResult.NetworkError("No hay usuario autenticado")
+                return@withContext SyncResult.NetworkError(appContext.getString(R.string.error_no_authenticated_user))
             }
 
             try {
                 val syncMovies = scope == SyncScope.All || scope == SyncScope.Movies
                 val syncSeries = scope == SyncScope.All || scope == SyncScope.Series
+                val syncOthers = scope == SyncScope.All || scope == SyncScope.Others
                 val offlinePostersEnabled = credentialsStore.getOfflinePostersEnabled()
+                val librariesById = fetchLibrariesById(userId ?: "")
                 var totalMovies = 0
                 var totalSeriesItems = 0
+                var totalOthers = 0
 
                 var processed = 0
                 var total: Int
 
                 if (syncMovies) {
                     val changedMovieIds = linkedSetOf<String>()
-                    var startIndex = 0
-                    val pageSize = 200
-                    while (true) {
-                        val response = getApi().getItems(
-                            userId = userId ?: "",
-                            includeItemTypes = "Movie",
-                            fields = "Genres,DateCreated",
-                            minDateLastSaved = null,
-                            startIndex = startIndex,
-                            limit = pageSize
-                        )
-                        val items = response.Items.orEmpty()
-                        if (items.isEmpty()) break
-
-                        val movieIds = items.asSequence()
-                            .filter { it.Type == "Movie" }
-                            .map { it.Id }
-                            .toList()
-                        val existingById = if (movieIds.isNotEmpty()) {
-                            db.movieDao().getMoviesByIds(movieIds).associateBy { it.id }
-                        } else {
-                            emptyMap()
-                        }
-                        val pageEntities = items.mapNotNull { dto ->
-                            dto.toMovieCatalogEntity(
-                                baseUrl = config.baseUrl,
-                                existing = existingById[dto.Id]
+                    val movieFetchSources: List<Pair<String?, String?>> =
+                        if (librariesById.isNotEmpty()) librariesById.map { it.key to it.value }
+                        else listOf(null to null)
+                    for ((libId, libName) in movieFetchSources) {
+                        var startIndex = 0
+                        val pageSize = 200
+                        while (true) {
+                            val response = getApi().getItems(
+                                userId = userId ?: "",
+                                includeItemTypes = "Movie",
+                                fields = "Genres,DateCreated",
+                                minDateLastSaved = null,
+                                startIndex = startIndex,
+                                limit = pageSize,
+                                parentId = libId
                             )
-                        }.map { entity ->
-                            entity.copy(
-                                posterUrl = resolvePosterUrl(
-                                    itemTypeDir = POSTER_MOVIES_DIR,
-                                    itemId = entity.id,
-                                    remoteUrl = entity.posterUrl,
-                                    offlineEnabled = offlinePostersEnabled
+                            val items = response.Items.orEmpty()
+                            if (items.isEmpty()) break
+
+                            val movieIds = items.asSequence()
+                                .filter { it.Type == "Movie" }
+                                .map { it.Id }
+                                .toList()
+                            val existingById = if (movieIds.isNotEmpty()) {
+                                db.movieDao().getMoviesByIds(movieIds).associateBy { it.id }
+                            } else {
+                                emptyMap()
+                            }
+                            val pageEntities = items.mapNotNull { dto ->
+                                dto.toMovieCatalogEntity(
+                                    baseUrl = config.baseUrl,
+                                    existing = existingById[dto.Id],
+                                    libraryId = libId,
+                                    libraryName = libName
                                 )
-                            )
-                        }
-                        if (pageEntities.isNotEmpty()) {
-                            db.movieDao().upsertAll(pageEntities)
-                            pageEntities.mapTo(changedMovieIds) { it.id }
-                        }
+                            }.map { entity ->
+                                entity.copy(
+                                    posterUrl = resolvePosterUrl(
+                                        itemTypeDir = POSTER_MOVIES_DIR,
+                                        itemId = entity.id,
+                                        remoteUrl = entity.posterUrl,
+                                        offlineEnabled = offlinePostersEnabled
+                                    )
+                                )
+                            }
+                            if (pageEntities.isNotEmpty()) {
+                                db.movieDao().upsertAll(pageEntities)
+                                pageEntities.mapTo(changedMovieIds) { it.id }
+                            }
 
-                        total = processed + items.size + pageSize
-                        repeat(items.size) {
-                            processed++
-                            onProgress(processed, total, SyncProgressPhase.FetchingMoviesCatalog)
+                            total = processed + items.size + pageSize
+                            repeat(items.size) {
+                                processed++
+                                onProgress(processed, total, SyncProgressPhase.FetchingMoviesCatalog)
+                            }
+                            if (items.size < pageSize) {
+                                total = processed
+                                onProgress(processed, total, SyncProgressPhase.FetchingMoviesCatalog)
+                                break
+                            }
+                            startIndex += items.size
                         }
-                        if (items.size < pageSize) {
-                            total = processed
-                            onProgress(processed, total, SyncProgressPhase.FetchingMoviesCatalog)
-                            break
-                        }
-                        startIndex += items.size
                     }
-
                     totalMovies += changedMovieIds.size
                 }
 
                 if (syncSeries) {
                     val seriesIdsToRefresh = linkedSetOf<String>()
-                    var startIndex = 0
-                    val pageSize = 200
-                    while (true) {
-                        val response = getApi().getItems(
-                            userId = userId ?: "",
-                            includeItemTypes = "Series",
-                            fields = "Genres,DateCreated",
-                            minDateLastSaved = null,
-                            startIndex = startIndex,
-                            limit = pageSize
-                        )
-                        val items = response.Items.orEmpty()
-                        if (items.isEmpty()) break
+                    val seriesFetchSources: List<Pair<String?, String?>> =
+                        if (librariesById.isNotEmpty()) librariesById.map { it.key to it.value }
+                        else listOf(null to null)
+                    for ((libId, libName) in seriesFetchSources) {
+                        var startIndex = 0
+                        val pageSize = 200
+                        while (true) {
+                            val response = getApi().getItems(
+                                userId = userId ?: "",
+                                includeItemTypes = "Series",
+                                fields = "Genres,DateCreated",
+                                minDateLastSaved = null,
+                                startIndex = startIndex,
+                                limit = pageSize,
+                                parentId = libId
+                            )
+                            val items = response.Items.orEmpty()
+                            if (items.isEmpty()) break
 
-                        val seriesEntities = items.mapNotNull { dto ->
-                            if (dto.Type != "Series") {
-                                null
-                            } else {
-                                seriesIdsToRefresh.add(dto.Id)
-                                val existing = db.seriesDao().getSeriesById(dto.Id)
-                                SeriesEntity(
-                                    id = dto.Id,
-                                    title = dto.Name,
-                                    createdUtcMillis = parseDateCreatedUtcMillis(dto.DateCreated) ?: existing?.createdUtcMillis,
-                                    posterUrl = resolvePosterUrl(
-                                        itemTypeDir = POSTER_SERIES_DIR,
-                                        itemId = dto.Id,
-                                        remoteUrl = dto.buildPrimaryImageUrl(config.baseUrl),
-                                        offlineEnabled = offlinePostersEnabled
-                                    ),
-                                    totalSeasons = existing?.totalSeasons ?: 0,
-                                    totalEpisodes = existing?.totalEpisodes ?: 0,
-                                    genres = dto.Genres ?: existing?.genres ?: emptyList(),
-                                    isFavorite = existing?.isFavorite ?: false
-                                )
+                            val seriesEntities = items.mapNotNull { dto ->
+                                if (dto.Type != "Series") {
+                                    null
+                                } else {
+                                    seriesIdsToRefresh.add(dto.Id)
+                                    val existing = db.seriesDao().getSeriesById(dto.Id)
+                                    SeriesEntity(
+                                        id = dto.Id,
+                                        title = dto.Name,
+                                        createdUtcMillis = parseDateCreatedUtcMillis(dto.DateCreated) ?: existing?.createdUtcMillis,
+                                        posterUrl = resolvePosterUrl(
+                                            itemTypeDir = POSTER_SERIES_DIR,
+                                            itemId = dto.Id,
+                                            remoteUrl = dto.buildPrimaryImageUrl(config.baseUrl),
+                                            offlineEnabled = offlinePostersEnabled
+                                        ),
+                                        totalSeasons = existing?.totalSeasons ?: 0,
+                                        totalEpisodes = existing?.totalEpisodes ?: 0,
+                                        genres = dto.Genres ?: existing?.genres ?: emptyList(),
+                                        isFavorite = existing?.isFavorite ?: false,
+                                        productionYear = dto.ProductionYear ?: existing?.productionYear,
+                                        libraryId = libId ?: existing?.libraryId,
+                                        libraryName = libName ?: existing?.libraryName,
+                                        filePath = existing?.filePath
+                                    )
+                                }
                             }
-                        }
-                        if (seriesEntities.isNotEmpty()) {
-                            db.seriesDao().upsertSeries(seriesEntities)
-                            totalSeriesItems += seriesEntities.size
-                        }
+                            if (seriesEntities.isNotEmpty()) {
+                                db.seriesDao().upsertSeries(seriesEntities)
+                                totalSeriesItems += seriesEntities.size
+                            }
 
-                        total = processed + items.size + pageSize
-                        repeat(items.size) {
-                            processed++
-                            onProgress(processed, total, SyncProgressPhase.FetchingSeries)
+                            total = processed + items.size + pageSize
+                            repeat(items.size) {
+                                processed++
+                                onProgress(processed, total, SyncProgressPhase.FetchingSeries)
+                            }
+                            if (items.size < pageSize) {
+                                total = processed
+                                onProgress(processed, total, SyncProgressPhase.FetchingSeries)
+                                break
+                            }
+                            startIndex += items.size
                         }
-                        if (items.size < pageSize) {
-                            total = processed
-                            onProgress(processed, total, SyncProgressPhase.FetchingSeries)
-                            break
-                        }
-                        startIndex += items.size
                     }
 
+                }
+
+                if (syncOthers) {
+                    totalOthers = syncOtherMediaCatalog(
+                        userId = userId ?: "",
+                        minDateLastSaved = null,
+                        librariesById = librariesById,
+                        reconcileMissing = true
+                    )
                 }
 
                 credentialsStore.updateLastSync(System.currentTimeMillis())
                 credentialsStore.appendSyncHistory(
                     buildSyncHistoryEntry(
-                        mode = "Rápida",
+                        mode = appContext.getString(R.string.mode_fast),
                         scope = scope,
                         moviesUpdated = totalMovies,
                         movieDetailsUpdated = 0,
                         seriesUpdated = totalSeriesItems,
-                        seriesDetailsUpdated = 0
+                        seriesDetailsUpdated = 0,
+                        othersUpdated = totalOthers
                     )
                 )
+
+                Log.d("JellyfinSync", "Other media fetched and saved: $totalOthers")
 
                 SyncResult.Success
             } catch (e: CancellationException) {
@@ -1195,11 +1485,11 @@ class DefaultJellyfinRepository(
     ): SyncResult {
         return withContext(Dispatchers.IO) {
             val config = credentialsStore.getServerConfig()
-                ?: return@withContext SyncResult.NetworkError("Configuración del servidor no encontrada")
+                ?: return@withContext SyncResult.NetworkError(appContext.getString(R.string.error_server_config_not_found))
 
             val userId = config.userId
             if (userId.isNullOrBlank() && config.apiKey.isNullOrBlank()) {
-                return@withContext SyncResult.NetworkError("No hay usuario autenticado")
+                return@withContext SyncResult.NetworkError(appContext.getString(R.string.error_no_authenticated_user))
             }
 
             try {
@@ -1217,7 +1507,7 @@ class DefaultJellyfinRepository(
                         }.onSuccess {
                             totalMovieDetails++
                         }.onFailure { error ->
-                            Log.w("JellyfinSync", "No se pudo refrescar detalle de película $movieId", error)
+                            Log.w("JellyfinSync", "Failed to refresh movie details for $movieId", error)
                         }
                         onProgress(index + 1, movieIds.size, SyncProgressPhase.FetchingMoviesDetails)
                     }
@@ -1231,12 +1521,13 @@ class DefaultJellyfinRepository(
                 credentialsStore.updateLastSync(System.currentTimeMillis())
                 credentialsStore.appendSyncHistory(
                     buildSyncHistoryEntry(
-                        mode = "Solo detalles",
+                        mode = appContext.getString(R.string.mode_details_only),
                         scope = scope,
                         moviesUpdated = 0,
                         movieDetailsUpdated = totalMovieDetails,
                         seriesUpdated = 0,
-                        seriesDetailsUpdated = totalSeriesDetails
+                        seriesDetailsUpdated = totalSeriesDetails,
+                        othersUpdated = 0
                     )
                 )
 
@@ -1263,24 +1554,25 @@ class DefaultJellyfinRepository(
         scope: SyncScope,
         forceFullMovies: Boolean,
         forceFullSeries: Boolean,
+        forceFullOthers: Boolean,
         modeLabel: String,
         onProgress: (processed: Int, total: Int, phase: SyncProgressPhase) -> Unit
     ): SyncResult {
         return withContext(Dispatchers.IO) {
             val config = credentialsStore.getServerConfig()
-                ?: return@withContext SyncResult.NetworkError("Configuración del servidor no encontrada")
+                ?: return@withContext SyncResult.NetworkError(appContext.getString(R.string.error_server_config_not_found))
 
-            Log.d("JellyfinSync", "Iniciando sincronización con ${config.baseUrl}")
+            Log.d("JellyfinSync", "Starting sync with ${config.baseUrl}")
 
             val userId = config.userId
             if (userId.isNullOrBlank() && config.apiKey.isNullOrBlank()) {
-                return@withContext SyncResult.NetworkError("No hay usuario autenticado")
+                return@withContext SyncResult.NetworkError(appContext.getString(R.string.error_no_authenticated_user))
             }
 
             val lastSync = config.lastSyncEpochMillis
             val lastSyncIso = lastSync?.let {
                 val date = Date(it)
-                val formatter = java.text.SimpleDateFormat(
+                val formatter = SimpleDateFormat(
                     "yyyy-MM-dd'T'HH:mm:ss'Z'",
                     Locale.US
                 ).apply {
@@ -1290,16 +1582,22 @@ class DefaultJellyfinRepository(
             }
 
             try {
-                Log.d("JellyfinSync", "Usando sincronización incremental desde $lastSyncIso")
+                Log.d("JellyfinSync", "Using incremental sync from $lastSyncIso")
                 val detailFields =
-                    "MediaStreams,MediaSources,Width,Height,Genres,DateCreated"
+                    "MediaStreams,MediaSources,Width,Height,Genres,DateCreated,Path,ProductionYear"
                 val movieDetailsMode = credentialsStore.getMovieDetailsSyncMode()
                 val offlinePostersEnabled = credentialsStore.getOfflinePostersEnabled()
+                val librariesById = fetchLibrariesById(userId ?: "")
 
                 val syncMovies = scope == SyncScope.All || scope == SyncScope.Movies
                 val syncSeries = scope == SyncScope.All || scope == SyncScope.Series
-                val movieMinDate = if (syncMovies && forceFullMovies) null else lastSyncIso
-                val seriesMinDate = if (syncSeries && forceFullSeries) null else lastSyncIso
+                val syncOthers = scope == SyncScope.All || scope == SyncScope.Others
+                val hasUnassignedMovies = syncMovies && db.movieDao().countWithoutLibrary() > 0
+                val hasUnassignedSeries = syncSeries && db.seriesDao().countWithoutLibrary() > 0
+                val hasUnassignedOthers = syncOthers && db.otherMediaDao().countWithoutLibrary() > 0
+                val movieMinDate = if (syncMovies && (forceFullMovies || hasUnassignedMovies)) null else lastSyncIso
+                val seriesMinDate = if (syncSeries && (forceFullSeries || hasUnassignedSeries)) null else lastSyncIso
+                val otherMinDate = if (syncOthers && (forceFullOthers || hasUnassignedOthers)) null else lastSyncIso
 
                 var processed = 0
                 var total: Int
@@ -1307,64 +1605,73 @@ class DefaultJellyfinRepository(
                 var totalMovieDetails = 0
                 var totalSeriesItems = 0
                 var totalSeriesDetails = 0
+                var totalOthers = 0
 
                 if (syncMovies) {
                     val changedMovieIds = linkedSetOf<String>()
-                    var startIndex = 0
-                    val pageSize = 300
-                    while (true) {
-                        val response = getApi().getItems(
-                            userId = userId ?: "",
-                            includeItemTypes = "Movie",
-                            fields = "Genres,DateCreated",
-                            minDateLastSaved = movieMinDate,
-                            startIndex = startIndex,
-                            limit = pageSize
-                        )
-                        val items = response.Items.orEmpty()
-                        if (items.isEmpty()) break
-
-                        val movieIds = items.asSequence()
-                            .filter { it.Type == "Movie" }
-                            .map { it.Id }
-                            .toList()
-                        val existingById = if (movieIds.isNotEmpty()) {
-                            db.movieDao().getMoviesByIds(movieIds).associateBy { it.id }
-                        } else {
-                            emptyMap()
-                        }
-                        val pageEntities = items.mapNotNull { dto ->
-                            dto.toMovieCatalogEntity(
-                                baseUrl = config.baseUrl,
-                                existing = existingById[dto.Id]
+                    val movieFetchSources: List<Pair<String?, String?>> =
+                        if (librariesById.isNotEmpty()) librariesById.map { it.key to it.value }
+                        else listOf(null to null)
+                    for ((libId, libName) in movieFetchSources) {
+                        var startIndex = 0
+                        val pageSize = 300
+                        while (true) {
+                            val response = getApi().getItems(
+                                userId = userId ?: "",
+                                includeItemTypes = "Movie",
+                                fields = "Genres,DateCreated",
+                                minDateLastSaved = movieMinDate,
+                                startIndex = startIndex,
+                                limit = pageSize,
+                                parentId = libId
                             )
-                        }.map { entity ->
-                            entity.copy(
-                                posterUrl = resolvePosterUrl(
-                                    itemTypeDir = POSTER_MOVIES_DIR,
-                                    itemId = entity.id,
-                                    remoteUrl = entity.posterUrl,
-                                    offlineEnabled = offlinePostersEnabled
+                            val items = response.Items.orEmpty()
+                            if (items.isEmpty()) break
+
+                            val movieIds = items.asSequence()
+                                .filter { it.Type == "Movie" }
+                                .map { it.Id }
+                                .toList()
+                            val existingById = if (movieIds.isNotEmpty()) {
+                                db.movieDao().getMoviesByIds(movieIds).associateBy { it.id }
+                            } else {
+                                emptyMap()
+                            }
+                            val pageEntities = items.mapNotNull { dto ->
+                                dto.toMovieCatalogEntity(
+                                    baseUrl = config.baseUrl,
+                                    existing = existingById[dto.Id],
+                                    libraryId = libId,
+                                    libraryName = libName
                                 )
-                            )
-                        }
-                        if (pageEntities.isNotEmpty()) {
-                            db.movieDao().upsertAll(pageEntities)
-                            totalMovies += pageEntities.size
-                            pageEntities.mapTo(changedMovieIds) { it.id }
-                        }
+                            }.map { entity ->
+                                entity.copy(
+                                    posterUrl = resolvePosterUrl(
+                                        itemTypeDir = POSTER_MOVIES_DIR,
+                                        itemId = entity.id,
+                                        remoteUrl = entity.posterUrl,
+                                        offlineEnabled = offlinePostersEnabled
+                                    )
+                                )
+                            }
+                            if (pageEntities.isNotEmpty()) {
+                                db.movieDao().upsertAll(pageEntities)
+                                totalMovies += pageEntities.size
+                                pageEntities.mapTo(changedMovieIds) { it.id }
+                            }
 
-                        total = processed + items.size + pageSize
-                        repeat(items.size) {
-                            processed++
-                            onProgress(processed, total, SyncProgressPhase.FetchingMoviesCatalog)
+                            total = processed + items.size + pageSize
+                            repeat(items.size) {
+                                processed++
+                                onProgress(processed, total, SyncProgressPhase.FetchingMoviesCatalog)
+                            }
+                            if (items.size < pageSize) {
+                                total = processed
+                                onProgress(processed, total, SyncProgressPhase.FetchingMoviesCatalog)
+                                break
+                            }
+                            startIndex += items.size
                         }
-                        if (items.size < pageSize) {
-                            total = processed
-                            onProgress(processed, total, SyncProgressPhase.FetchingMoviesCatalog)
-                            break
-                        }
-                        startIndex += items.size
                     }
 
                     val targetMovieIds = selectMovieDetailsTargets(changedMovieIds, movieDetailsMode)
@@ -1424,69 +1731,89 @@ class DefaultJellyfinRepository(
                         }
                     }
 
-                    Log.d("JellyfinSync", "Películas recibidas y guardadas: $totalMovies")
+                    Log.d("JellyfinSync", "Movies fetched and saved: $totalMovies")
                 }
 
                 if (syncSeries) {
                     val seriesIdsToRefresh = linkedSetOf<String>()
-                    var startIndex = 0
-                    val pageSize = 200
-                    while (true) {
-                        val response = getApi().getItems(
-                            userId = userId ?: "",
-                            includeItemTypes = "Series",
-                            fields = "Genres,DateCreated",
-                            minDateLastSaved = seriesMinDate,
-                            startIndex = startIndex,
-                            limit = pageSize
-                        )
-                        val items = response.Items.orEmpty()
-                        if (items.isEmpty()) break
+                    val seriesFetchSources: List<Pair<String?, String?>> =
+                        if (librariesById.isNotEmpty()) librariesById.map { it.key to it.value }
+                        else listOf(null to null)
+                    for ((libId, libName) in seriesFetchSources) {
+                        var startIndex = 0
+                        val pageSize = 200
+                        while (true) {
+                            val response = getApi().getItems(
+                                userId = userId ?: "",
+                                includeItemTypes = "Series",
+                                fields = "Genres,DateCreated",
+                                minDateLastSaved = seriesMinDate,
+                                startIndex = startIndex,
+                                limit = pageSize,
+                                parentId = libId
+                            )
+                            val items = response.Items.orEmpty()
+                            if (items.isEmpty()) break
 
-                        val seriesEntities = items.mapNotNull { dto ->
-                            if (dto.Type != "Series") {
-                                null
-                            } else {
-                                seriesIdsToRefresh.add(dto.Id)
-                                val existing = db.seriesDao().getSeriesById(dto.Id)
-                                SeriesEntity(
-                                    id = dto.Id,
-                                    title = dto.Name,
-                                    createdUtcMillis = parseDateCreatedUtcMillis(dto.DateCreated) ?: existing?.createdUtcMillis,
-                                    posterUrl = resolvePosterUrl(
-                                        itemTypeDir = POSTER_SERIES_DIR,
-                                        itemId = dto.Id,
-                                        remoteUrl = dto.buildPrimaryImageUrl(config.baseUrl),
-                                        offlineEnabled = offlinePostersEnabled
-                                    ),
-                                    totalSeasons = existing?.totalSeasons ?: 0,
-                                    totalEpisodes = existing?.totalEpisodes ?: 0,
-                                    genres = dto.Genres ?: existing?.genres ?: emptyList(),
-                                    isFavorite = existing?.isFavorite ?: false
-                                )
+                            val seriesEntities = items.mapNotNull { dto ->
+                                if (dto.Type != "Series") {
+                                    null
+                                } else {
+                                    seriesIdsToRefresh.add(dto.Id)
+                                    val existing = db.seriesDao().getSeriesById(dto.Id)
+                                    SeriesEntity(
+                                        id = dto.Id,
+                                        title = dto.Name,
+                                        createdUtcMillis = parseDateCreatedUtcMillis(dto.DateCreated) ?: existing?.createdUtcMillis,
+                                        posterUrl = resolvePosterUrl(
+                                            itemTypeDir = POSTER_SERIES_DIR,
+                                            itemId = dto.Id,
+                                            remoteUrl = dto.buildPrimaryImageUrl(config.baseUrl),
+                                            offlineEnabled = offlinePostersEnabled
+                                        ),
+                                        totalSeasons = existing?.totalSeasons ?: 0,
+                                        totalEpisodes = existing?.totalEpisodes ?: 0,
+                                        genres = dto.Genres ?: existing?.genres ?: emptyList(),
+                                        isFavorite = existing?.isFavorite ?: false,
+                                        productionYear = dto.ProductionYear ?: existing?.productionYear,
+                                        libraryId = libId ?: existing?.libraryId,
+                                        libraryName = libName ?: existing?.libraryName,
+                                        filePath = existing?.filePath
+                                    )
+                                }
                             }
-                        }
-                        if (seriesEntities.isNotEmpty()) {
-                            db.seriesDao().upsertSeries(seriesEntities)
-                            totalSeriesItems += seriesEntities.size
-                        }
+                            if (seriesEntities.isNotEmpty()) {
+                                db.seriesDao().upsertSeries(seriesEntities)
+                                totalSeriesItems += seriesEntities.size
+                            }
 
-                        total = processed + items.size + pageSize
-                        repeat(items.size) {
-                            processed++
-                            onProgress(processed, total, SyncProgressPhase.FetchingSeries)
+                            total = processed + items.size + pageSize
+                            repeat(items.size) {
+                                processed++
+                                onProgress(processed, total, SyncProgressPhase.FetchingSeries)
+                            }
+                            if (items.size < pageSize) {
+                                total = processed
+                                onProgress(processed, total, SyncProgressPhase.FetchingSeries)
+                                break
+                            }
+                            startIndex += items.size
                         }
-                        if (items.size < pageSize) {
-                            total = processed
-                            onProgress(processed, total, SyncProgressPhase.FetchingSeries)
-                            break
-                        }
-                        startIndex += items.size
                     }
 
                     totalSeriesDetails = refreshSeriesDetailsBatch(seriesIdsToRefresh, onProgress)
 
-                    Log.d("JellyfinSync", "Series recibidas y guardadas: $totalSeriesItems")
+                    Log.d("JellyfinSync", "Series fetched and saved: $totalSeriesItems")
+                }
+
+                if (syncOthers) {
+                    totalOthers = syncOtherMediaCatalog(
+                        userId = userId ?: "",
+                        minDateLastSaved = otherMinDate,
+                        librariesById = librariesById,
+                        reconcileMissing = otherMinDate == null
+                    )
+                    Log.d("JellyfinSync", "Other media fetched and saved: $totalOthers")
                 }
 
                 credentialsStore.updateLastSync(System.currentTimeMillis())
@@ -1497,36 +1824,37 @@ class DefaultJellyfinRepository(
                         moviesUpdated = totalMovies,
                         movieDetailsUpdated = totalMovieDetails,
                         seriesUpdated = totalSeriesItems,
-                        seriesDetailsUpdated = totalSeriesDetails
+                        seriesDetailsUpdated = totalSeriesDetails,
+                        othersUpdated = totalOthers
                     )
                 )
 
                 Log.d(
                     "JellyfinSync",
-                    "Sincronización completada. Películas=$totalMovies, elementos de series=$totalSeriesItems"
+                    "Sync completed. movies=$totalMovies, seriesItems=$totalSeriesItems"
                 )
 
                 SyncResult.Success
             } catch (e: CancellationException) {
-                Log.d("JellyfinSync", "Sincronización cancelada", e)
+                Log.d("JellyfinSync", "Sync cancelled", e)
                 throw e
             } catch (e: retrofit2.HttpException) {
-                Log.e("JellyfinSync", "Error HTTP durante sincronización", e)
+                Log.e("JellyfinSync", "HTTP error during sync", e)
                 SyncResult.NetworkError(httpDiagnosticMessage(e))
             } catch (e: java.net.SocketTimeoutException) {
-                Log.e("JellyfinSync", "Timeout de red durante sincronización", e)
+                Log.e("JellyfinSync", "Network timeout during sync", e)
                 SyncResult.NetworkError(networkDiagnosticMessage(e))
             } catch (e: java.net.UnknownHostException) {
-                Log.e("JellyfinSync", "Servidor no disponible", e)
+                Log.e("JellyfinSync", "Server unavailable", e)
                 SyncResult.NetworkError(networkDiagnosticMessage(e))
             } catch (e: java.net.ConnectException) {
-                Log.e("JellyfinSync", "Conexión rechazada durante sincronización", e)
+                Log.e("JellyfinSync", "Connection refused during sync", e)
                 SyncResult.NetworkError(networkDiagnosticMessage(e))
             } catch (e: javax.net.ssl.SSLException) {
-                Log.e("JellyfinSync", "Error SSL durante sincronización", e)
+                Log.e("JellyfinSync", "SSL error during sync", e)
                 SyncResult.NetworkError(networkDiagnosticMessage(e))
             } catch (e: Exception) {
-                Log.e("JellyfinSync", "Error desconocido durante sincronización", e)
+                Log.e("JellyfinSync", "Unknown error during sync", e)
                 SyncResult.UnknownError(networkDiagnosticMessage(e))
             }
         }
@@ -1549,7 +1877,7 @@ class DefaultJellyfinRepository(
             }.onSuccess {
                 refreshed++
             }.onFailure { error ->
-                Log.w("JellyfinSync", "No se pudo refrescar detalle de serie $seriesId", error)
+                Log.w("JellyfinSync", "Failed to refresh series details for $seriesId", error)
             }
             onProgress(index + 1, seriesIds.size, SyncProgressPhase.SeriesDetails)
         }
@@ -1563,16 +1891,28 @@ class DefaultJellyfinRepository(
         moviesUpdated: Int,
         movieDetailsUpdated: Int,
         seriesUpdated: Int,
-        seriesDetailsUpdated: Int
+        seriesDetailsUpdated: Int,
+        othersUpdated: Int
     ): String {
-        val formatter = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
+        val formatter = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
         val timestamp = formatter.format(Date())
         val scopeLabel = when (scope) {
-            SyncScope.All -> "Todo"
-            SyncScope.Movies -> "Películas"
-            SyncScope.Series -> "Series"
+            SyncScope.All -> appContext.getString(R.string.scope_all)
+            SyncScope.Movies -> appContext.getString(R.string.scope_movies)
+            SyncScope.Series -> appContext.getString(R.string.scope_series)
+            SyncScope.Others -> appContext.getString(R.string.scope_others)
         }
-        return "$timestamp · $mode · $scopeLabel · Películas: $moviesUpdated (detalles: $movieDetailsUpdated) · Series: $seriesUpdated (detalles: $seriesDetailsUpdated)"
+        return appContext.getString(
+            R.string.sync_history_entry,
+            timestamp,
+            mode,
+            scopeLabel,
+            moviesUpdated,
+            movieDetailsUpdated,
+            seriesUpdated,
+            seriesDetailsUpdated,
+            othersUpdated
+        )
     }
 
     private fun selectMovieDetailsTargets(
@@ -1610,28 +1950,32 @@ class DefaultJellyfinRepository(
     private fun httpDiagnosticMessage(e: retrofit2.HttpException): String {
         val code = e.code()
         return when (code) {
-            401 -> "Auth 401: token/API key inválida o usuario/contraseña incorrectos"
-            403 -> "Auth 403: acceso denegado por el servidor"
-            404 -> "HTTP 404: endpoint no encontrado (revisa URL/basePath)"
-            502, 503, 504 -> "HTTP $code: servidor/proxy no disponible"
-            else -> "HTTP $code: fallo de conexión con el servidor"
+            401 -> appContext.getString(R.string.error_auth_401_user_pass)
+            403 -> appContext.getString(R.string.error_http_403)
+            404 -> appContext.getString(R.string.error_http_404)
+            502, 503, 504 -> appContext.getString(R.string.error_http_5xx, code)
+            else -> appContext.getString(R.string.error_http_generic, code)
         }
     }
 
     private fun networkDiagnosticMessage(error: Throwable): String {
         return when (error) {
-            is java.net.UnknownHostException -> "DNS: no se resuelve el dominio/IP"
-            is java.net.ConnectException -> "NAT/Puerto: conexión rechazada o puerto cerrado"
-            is java.net.SocketTimeoutException -> "Timeout: sin respuesta del servidor (red/NAT/firewall)"
-            is javax.net.ssl.SSLHandshakeException -> "SSL: fallo de certificado/handshake TLS"
-            is javax.net.ssl.SSLException -> "SSL: conexión segura no válida"
-            else -> error.message ?: "Error de red desconocido"
+            is java.net.UnknownHostException -> appContext.getString(R.string.error_dns)
+            is java.net.ConnectException -> appContext.getString(R.string.error_nat_port)
+            is java.net.SocketTimeoutException -> appContext.getString(R.string.error_timeout_network)
+            is javax.net.ssl.SSLHandshakeException -> appContext.getString(R.string.error_ssl_handshake)
+            is javax.net.ssl.SSLException -> appContext.getString(R.string.error_ssl_invalid)
+            else -> error.message
+                ?.takeIf { it.isNotBlank() }
+                ?: appContext.getString(R.string.error_network_unknown)
         }
     }
 
     private fun BaseItemDto.toMovieEntity(
         baseUrl: String,
-        existing: MovieEntity? = null
+        existing: MovieEntity? = null,
+        libraryId: String? = null,
+        libraryName: String? = null
     ): MovieEntity? {
         if (Type != "Movie") return null
 
@@ -1684,13 +2028,39 @@ class DefaultJellyfinRepository(
             audioLanguages = audioLanguages,
             subtitleLanguages = subtitleLanguages,
             genres = Genres.orEmpty(),
-            isFavorite = existing?.isFavorite ?: false
+            isFavorite = existing?.isFavorite ?: false,
+            productionYear = ProductionYear ?: existing?.productionYear,
+            libraryId = libraryId ?: existing?.libraryId,
+            libraryName = libraryName ?: existing?.libraryName,
+            filePath = Path ?: existing?.filePath
+        )
+    }
+
+    private fun BaseItemDto.toOtherMediaEntity(
+        libraryId: String? = null,
+        libraryName: String? = null
+    ): OtherMediaEntity? {
+        val normalizedType = when {
+            Type.equals("Video", ignoreCase = true) -> "Video"
+            Type.equals("Photo", ignoreCase = true) -> "Photo"
+            else -> null
+        } ?: return null
+
+        return OtherMediaEntity(
+            id = Id,
+            title = Name,
+            mediaType = normalizedType,
+            createdUtcMillis = parseDateCreatedUtcMillis(DateCreated),
+            libraryId = libraryId,
+            libraryName = libraryName
         )
     }
 
     private fun BaseItemDto.toMovieCatalogEntity(
         baseUrl: String,
-        existing: MovieEntity?
+        existing: MovieEntity?,
+        libraryId: String? = null,
+        libraryName: String? = null
     ): MovieEntity? {
         if (Type != "Movie") return null
 
@@ -1709,7 +2079,11 @@ class DefaultJellyfinRepository(
             audioLanguages = existing?.audioLanguages ?: emptyList(),
             subtitleLanguages = existing?.subtitleLanguages ?: emptyList(),
             genres = Genres ?: existing?.genres ?: emptyList(),
-            isFavorite = existing?.isFavorite ?: false
+            isFavorite = existing?.isFavorite ?: false,
+            productionYear = existing?.productionYear,
+            libraryId = libraryId ?: existing?.libraryId,
+            libraryName = libraryName ?: existing?.libraryName,
+            filePath = existing?.filePath
         )
     }
 
@@ -1718,9 +2092,104 @@ class DefaultJellyfinRepository(
         return "${baseUrl.trimEnd('/')}/Items/$Id/Images/Primary?tag=$tag"
     }
 
+    private suspend fun syncOtherMediaCatalog(
+        userId: String,
+        minDateLastSaved: String?,
+        librariesById: Map<String, String>,
+        reconcileMissing: Boolean
+    ): Int {
+        var totalOthers = 0
+        val fetchSources: List<Pair<String?, String?>> =
+            if (librariesById.isNotEmpty()) librariesById.map { it.key to it.value }
+            else listOf(null to null)
+        val seenIdsByLibrary = linkedMapOf<String, MutableSet<String>>()
+        val seenIdsWithoutLibrary = linkedSetOf<String>()
+
+        for ((libId, libName) in fetchSources) {
+            var startIndex = 0
+            val pageSize = 300
+            while (true) {
+                val response = getApi().getItems(
+                    userId = userId,
+                    includeItemTypes = "Video,Photo",
+                    fields = "DateCreated",
+                    minDateLastSaved = minDateLastSaved,
+                    startIndex = startIndex,
+                    limit = pageSize,
+                    parentId = libId
+                )
+                val items = response.Items.orEmpty()
+                if (items.isEmpty()) break
+
+                val entities = items.mapNotNull { dto ->
+                    dto.toOtherMediaEntity(
+                        libraryId = libId,
+                        libraryName = libName
+                    )
+                }
+                if (entities.isNotEmpty()) {
+                    db.otherMediaDao().upsertAll(entities)
+                    totalOthers += entities.size
+                    if (reconcileMissing) {
+                        if (libId.isNullOrBlank()) {
+                            entities.forEach { seenIdsWithoutLibrary.add(it.id) }
+                        } else {
+                            val keep = seenIdsByLibrary.getOrPut(libId) { linkedSetOf() }
+                            entities.forEach { keep.add(it.id) }
+                        }
+                    }
+                }
+
+                if (items.size < pageSize) {
+                    break
+                }
+                startIndex += items.size
+            }
+        }
+
+        if (reconcileMissing) {
+            for ((libId, _) in fetchSources) {
+                if (libId.isNullOrBlank()) {
+                    if (seenIdsWithoutLibrary.isEmpty()) {
+                        db.otherMediaDao().clearWithoutLibraryId()
+                    } else {
+                        db.otherMediaDao().deleteWithoutLibraryIdNotIn(seenIdsWithoutLibrary.toList())
+                    }
+                } else {
+                    val keepIds = seenIdsByLibrary[libId].orEmpty().toList()
+                    if (keepIds.isEmpty()) {
+                        db.otherMediaDao().clearByLibraryId(libId)
+                    } else {
+                        db.otherMediaDao().deleteByLibraryIdNotIn(libId, keepIds)
+                    }
+                }
+            }
+        }
+
+        return totalOthers
+    }
+
     private fun parseDateCreatedUtcMillis(value: String?): Long? {
         if (value.isNullOrBlank()) return null
-        return runCatching { Instant.parse(value).toEpochMilli() }.getOrNull()
+
+        val formats = listOf(
+            "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+            "yyyy-MM-dd'T'HH:mm:ss'Z'",
+            "yyyy-MM-dd'T'HH:mm:ss.SSSX",
+            "yyyy-MM-dd'T'HH:mm:ssX"
+        )
+
+        for (pattern in formats) {
+            val parsed = runCatching {
+                SimpleDateFormat(pattern, Locale.US).apply {
+                    timeZone = TimeZone.getTimeZone("UTC")
+                    isLenient = false
+                }.parse(value)?.time
+            }.getOrNull()
+            if (parsed != null) return parsed
+        }
+
+        return null
     }
 
     private fun resolutionToQuality(resolution: String?): String? {
@@ -1832,7 +2301,8 @@ class DefaultJellyfinRepository(
 }
 
 private class AuthorizationInterceptor(
-    private val credentialsStore: CredentialsStore
+    private val credentialsStore: CredentialsStore,
+    private val appVersionName: String
 ) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): okhttp3.Response {
         val original = chain.request()
@@ -1845,8 +2315,10 @@ private class AuthorizationInterceptor(
         val builder = original.newBuilder()
 
         val appName = "BibliotecaJelly"
-        val deviceName = Build.MODEL ?: "AndroidDevice"
-        val version = "1.0.0"
+        val deviceName = Build.MODEL
+            .takeIf { it.isNotBlank() }
+            ?: "AndroidDevice"
+        val version = appVersionName
         val deviceId = deviceName
 
         val embyAuth =
@@ -1869,23 +2341,23 @@ private class AuthorizationInterceptor(
 
 object ServiceLocator {
     private val MIGRATION_1_2 = object : Migration(1, 2) {
-        override fun migrate(database: SupportSQLiteDatabase) {
-            database.execSQL("ALTER TABLE movies ADD COLUMN genres TEXT NOT NULL DEFAULT ''")
-            database.execSQL("ALTER TABLE series ADD COLUMN genres TEXT NOT NULL DEFAULT ''")
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE movies ADD COLUMN genres TEXT NOT NULL DEFAULT ''")
+            db.execSQL("ALTER TABLE series ADD COLUMN genres TEXT NOT NULL DEFAULT ''")
         }
     }
 
     private val MIGRATION_2_3 = object : Migration(2, 3) {
-        override fun migrate(database: SupportSQLiteDatabase) {
-            database.execSQL("ALTER TABLE movies ADD COLUMN created_utc_millis INTEGER")
-            database.execSQL("ALTER TABLE series ADD COLUMN created_utc_millis INTEGER")
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE movies ADD COLUMN created_utc_millis INTEGER")
+            db.execSQL("ALTER TABLE series ADD COLUMN created_utc_millis INTEGER")
         }
     }
 
     private val MIGRATION_3_4 = object : Migration(3, 4) {
-        override fun migrate(database: SupportSQLiteDatabase) {
-            database.execSQL("ALTER TABLE movies ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0")
-            database.execSQL("ALTER TABLE series ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0")
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE movies ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE series ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0")
         }
     }
 
@@ -1904,7 +2376,14 @@ object ServiceLocator {
                 context.applicationContext,
                 BibliotecaDatabase::class.java,
                 "biblioteca_jelly.db"
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+            ).addMigrations(
+                MIGRATION_1_2,
+                MIGRATION_2_3,
+                MIGRATION_3_4,
+                MIGRATION_4_5,
+                MIGRATION_5_6,
+                MIGRATION_6_7
+            )
                 .build().also { dbInstance = it }
         }
     }

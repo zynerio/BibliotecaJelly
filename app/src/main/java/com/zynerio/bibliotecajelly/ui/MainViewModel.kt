@@ -1,16 +1,19 @@
 package com.zynerio.bibliotecajelly.ui
 
 import android.app.Application
+import android.annotation.SuppressLint
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.zynerio.bibliotecajelly.R
 import com.zynerio.bibliotecajelly.data.AutoSyncMode
 import com.zynerio.bibliotecajelly.data.ConnectionResult
 import com.zynerio.bibliotecajelly.data.JellyfinRepository
+import com.zynerio.bibliotecajelly.data.LibraryViewInfo
 import com.zynerio.bibliotecajelly.data.MovieEntity
+import com.zynerio.bibliotecajelly.data.OtherMediaEntity
 import com.zynerio.bibliotecajelly.data.SeriesEntity
 import com.zynerio.bibliotecajelly.data.SeasonEntity
 import com.zynerio.bibliotecajelly.data.ServiceLocator
-import com.zynerio.bibliotecajelly.data.SeriesWithSeasonsAndEpisodes
 import com.zynerio.bibliotecajelly.data.MovieDetailsSyncMode
 import com.zynerio.bibliotecajelly.data.ListDisplayMode
 import com.zynerio.bibliotecajelly.data.LibrarySortMode
@@ -39,7 +42,8 @@ import java.util.Locale
 
 enum class LibraryTab {
     Movies,
-    Series
+    Series,
+    Others
 }
 
 enum class TechnicalFilterType {
@@ -57,9 +61,11 @@ data class ConfigUiState(
     val isValidating: Boolean = false,
     val validationError: String? = null,
     val isConfigured: Boolean = false,
-    val databaseSizeText: String = "Tamaño base de datos: calculando...",
-    val postersSizeText: String = "Portadas locales: calculando...",
+    val databaseSizeText: String = "",
+    val postersSizeText: String = "",
     val downloadPostersOffline: Boolean = false,
+    val showFilePath: Boolean = false,
+    val librariesAdvancedView: Boolean = false,
     val autoSyncMode: AutoSyncMode = AutoSyncMode.OnStart,
     val movieDetailsSyncMode: MovieDetailsSyncMode = MovieDetailsSyncMode.All,
     val listDisplayMode: ListDisplayMode = ListDisplayMode.Infinite
@@ -69,8 +75,8 @@ data class SyncUiState(
     val isSyncing: Boolean = false,
     val processed: Int = 0,
     val total: Int = 0,
-    val phaseText: String = "Sincronizando catálogo",
-    val serverStatusText: String = "Servidor: sin comprobar",
+    val phaseText: String = "",
+    val serverStatusText: String = "",
     val isServerActive: Boolean = false,
     val lastSyncText: String? = null,
     val lastError: String? = null,
@@ -112,11 +118,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val repository: JellyfinRepository =
         ServiceLocator.provideRepository(application)
 
-    private val _uiState = MutableStateFlow(MainUiState())
+    private val _uiState = MutableStateFlow(
+        MainUiState(
+            config = ConfigUiState(
+                databaseSizeText = application.getString(R.string.db_size_calculating),
+                postersSizeText = application.getString(R.string.posters_size_calculating)
+            ),
+            sync = SyncUiState(
+                phaseText = application.getString(R.string.phase_syncing_catalog),
+                serverStatusText = application.getString(R.string.server_not_checked)
+            )
+        )
+    )
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
 
     private val searchQueryMovies = MutableStateFlow("")
     private val searchQuerySeries = MutableStateFlow("")
+    private val searchQueryOthers = MutableStateFlow("")
+    private val _libraryViews = MutableStateFlow<List<LibraryViewInfo>>(emptyList())
+    val libraryViews: StateFlow<List<LibraryViewInfo>> = _libraryViews.asStateFlow()
+    private val _libraryCoverOverrides = MutableStateFlow<Map<String, String>>(emptyMap())
+    val libraryCoverOverrides: StateFlow<Map<String, String>> = _libraryCoverOverrides.asStateFlow()
+    private val _showLibraryCoverHint = MutableStateFlow(false)
+    val showLibraryCoverHint: StateFlow<Boolean> = _showLibraryCoverHint.asStateFlow()
 
     val movies: StateFlow<List<MovieEntity>> =
         searchQueryMovies.flatMapLatest { query ->
@@ -130,6 +154,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val series: StateFlow<List<SeriesEntity>> =
         searchQuerySeries.flatMapLatest { query ->
             repository.searchSeries(query)
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = emptyList()
+        )
+
+    val others: StateFlow<List<OtherMediaEntity>> =
+        searchQueryOthers.flatMapLatest { query ->
+            repository.searchOthers(query)
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -150,6 +183,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             initialValue = 0
         )
 
+    val totalOthersCount: StateFlow<Int> =
+        repository.others.map { it.size }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = 0
+        )
+
     val isConfigured: StateFlow<Boolean> =
         uiState.map { it.config.isConfigured }.stateIn(
             scope = viewModelScope,
@@ -159,7 +199,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private var currentSyncJob: Job? = null
     private val partialSyncWarning =
-        "Sincronización cancelada: solo tendrás una sincronización parcial."
+        application.getString(R.string.warning_partial_sync)
     private val installedVersionName: String by lazy {
         runCatching {
             getApplication<Application>()
@@ -177,6 +217,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val movieDetailsSyncMode = repository.getMovieDetailsSyncMode()
             val listDisplayMode = repository.getListDisplayMode()
             val offlinePostersEnabled = repository.getOfflinePostersEnabled()
+            val showFilePath = repository.getShowFilePath()
+            val librariesAdvancedView = repository.getLibrariesAdvancedView()
+            _libraryCoverOverrides.value = repository.getLibraryCoverOverrides()
+            _showLibraryCoverHint.value = !repository.isLibraryCoverHintDismissed()
             val movieSortMode = repository.getMovieSortMode()
             val seriesSortMode = repository.getSeriesSortMode()
             val now = System.currentTimeMillis()
@@ -204,6 +248,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         apiKey = config.apiKey.orEmpty(),
                         isConfigured = true,
                         downloadPostersOffline = offlinePostersEnabled,
+                        showFilePath = showFilePath,
+                        librariesAdvancedView = librariesAdvancedView,
                         autoSyncMode = autoSyncMode,
                         movieDetailsSyncMode = movieDetailsSyncMode,
                         listDisplayMode = listDisplayMode
@@ -220,6 +266,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
 
                 updateServerStatus()
+                loadLibraryViews()
 
                 if (autoSyncMode == AutoSyncMode.OnStart) {
                     triggerStartupSync()
@@ -228,6 +275,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.value = _uiState.value.copy(
                     config = _uiState.value.config.copy(
                         downloadPostersOffline = offlinePostersEnabled,
+                        showFilePath = showFilePath,
+                        librariesAdvancedView = librariesAdvancedView,
                         autoSyncMode = autoSyncMode,
                         movieDetailsSyncMode = movieDetailsSyncMode,
                         listDisplayMode = listDisplayMode
@@ -242,6 +291,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             refreshDatabaseSize()
             checkForAppUpdate()
+        }
+    }
+
+    private suspend fun loadLibraryViews() {
+        _libraryViews.value = repository.getLibraryViews()
+    }
+
+    fun setLibraryCoverOverride(libraryName: String, imageUrl: String) {
+        viewModelScope.launch {
+            repository.setLibraryCoverOverride(libraryName, imageUrl)
+            _libraryCoverOverrides.value = repository.getLibraryCoverOverrides()
+        }
+    }
+
+    fun clearLibraryCoverOverride(libraryName: String) {
+        viewModelScope.launch {
+            repository.clearLibraryCoverOverride(libraryName)
+            _libraryCoverOverrides.value = repository.getLibraryCoverOverrides()
+        }
+    }
+
+    fun dismissLibraryCoverHint() {
+        viewModelScope.launch {
+            repository.setLibraryCoverHintDismissed(true)
+            _showLibraryCoverHint.value = false
         }
     }
 
@@ -315,11 +389,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    fun onShowFilePathChanged(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(
+            config = _uiState.value.config.copy(showFilePath = enabled)
+        )
+    }
+
+    fun onLibrariesAdvancedViewChanged(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(
+            config = _uiState.value.config.copy(librariesAdvancedView = enabled)
+        )
+    }
+
     fun onSearchQueryChanged(value: String) {
         val currentTab = _uiState.value.library.selectedTab
         when (currentTab) {
             LibraryTab.Movies -> searchQueryMovies.value = value
             LibraryTab.Series -> searchQuerySeries.value = value
+            LibraryTab.Others -> searchQueryOthers.value = value
         }
 
         _uiState.value = _uiState.value.copy(
@@ -331,6 +418,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val newQuery = when (tab) {
             LibraryTab.Movies -> searchQueryMovies.value
             LibraryTab.Series -> searchQuerySeries.value
+            LibraryTab.Others -> searchQueryOthers.value
         }
 
         _uiState.value = _uiState.value.copy(
@@ -366,6 +454,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     library.copy(selectedSeriesGenres = next)
                 }
+
+                LibraryTab.Others -> library
             }
         )
     }
@@ -376,6 +466,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             library = when (library.selectedTab) {
                 LibraryTab.Movies -> library.copy(selectedMovieGenres = emptySet())
                 LibraryTab.Series -> library.copy(selectedSeriesGenres = emptySet())
+                LibraryTab.Others -> library
             }
         )
     }
@@ -435,6 +526,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             }
+
+            LibraryTab.Others -> Unit
         }
     }
 
@@ -458,6 +551,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     repository.setSeriesSortMode(mode)
                 }
             }
+
+            LibraryTab.Others -> Unit
         }
     }
 
@@ -472,6 +567,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 LibraryTab.Series -> library.copy(
                     showOnlySeriesFavorites = !library.showOnlySeriesFavorites
                 )
+
+                LibraryTab.Others -> library
             }
         )
     }
@@ -488,13 +585,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun markNovedadesAsSeen() {
+    fun markNovedadesAsSeen(markUntilEpochMillis: Long? = null) {
         val now = System.currentTimeMillis()
+        val target = maxOf(now, markUntilEpochMillis ?: now)
         _uiState.value = _uiState.value.copy(
-            library = _uiState.value.library.copy(lastSeenEpochMillis = now)
+            library = _uiState.value.library.copy(lastSeenEpochMillis = target)
         )
         viewModelScope.launch {
-            repository.setLibraryLastSeenMillis(now)
+            repository.setLibraryLastSeenMillis(target)
         }
     }
 
@@ -510,6 +608,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     selectedSeriesTechnicalFilters = emptyMap(),
                     selectedSeriesTechnicalMatchedIds = null
                 )
+
+                LibraryTab.Others -> library
             }
         )
     }
@@ -541,12 +641,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 )
             }
+
+            LibraryTab.Others -> {
+                searchQueryOthers.value = ""
+                _uiState.value = _uiState.value.copy(
+                    library = library.copy(searchQuery = "")
+                )
+            }
         }
     }
 
     fun clearAllFiltersAcrossTabs() {
         searchQueryMovies.value = ""
         searchQuerySeries.value = ""
+        searchQueryOthers.value = ""
 
         val library = _uiState.value.library
         _uiState.value = _uiState.value.copy(
@@ -595,6 +703,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun clearSyncHistory() {
+        viewModelScope.launch {
+            repository.clearSyncHistory()
+            _uiState.value = _uiState.value.copy(
+                sync = _uiState.value.sync.copy(syncHistory = emptyList())
+            )
+        }
+    }
+
     suspend fun refreshSeriesDetails(seriesId: String) {
         try {
             repository.refreshSeriesDetails(seriesId)
@@ -632,6 +749,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             repository.setMovieDetailsSyncMode(state.movieDetailsSyncMode)
             repository.setListDisplayMode(state.listDisplayMode)
             repository.setOfflinePostersEnabled(state.downloadPostersOffline)
+            repository.setShowFilePath(state.showFilePath)
+            repository.setLibrariesAdvancedView(state.librariesAdvancedView)
 
             _uiState.value = _uiState.value.copy(
                 config = _uiState.value.config.copy(
@@ -643,13 +762,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             val status = withTimeoutOrNull(12_000L) {
                 repository.checkServerStatus()
-            } ?: ConnectionResult.NetworkError("Tiempo de conexión agotado al validar el servidor")
+            } ?: ConnectionResult.NetworkError(getApplication<Application>().getString(R.string.timeout_validating_server))
 
             when (status) {
                 ConnectionResult.Success -> {
                     _uiState.value = _uiState.value.copy(
                         sync = _uiState.value.sync.copy(
-                            serverStatusText = "Servidor: activo",
+                            serverStatusText = getApplication<Application>().getString(R.string.server_active),
                             isServerActive = true,
                             lastError = null
                         )
@@ -658,12 +777,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     if (state.apiKey.isBlank()) {
                         when (val auth = withTimeoutOrNull(15_000L) {
                             repository.authenticateAndValidateConnection()
-                        } ?: ConnectionResult.NetworkError("Tiempo de conexión agotado al validar credenciales")) {
+                        } ?: ConnectionResult.NetworkError(getApplication<Application>().getString(R.string.timeout_validating_credentials))) {
                             ConnectionResult.Success -> Unit
                             is ConnectionResult.AuthFailure -> {
                                 _uiState.value = _uiState.value.copy(
                                     sync = _uiState.value.sync.copy(
-                                        serverStatusText = "Servidor: activo (sin autenticar)",
+                                        serverStatusText = getApplication<Application>().getString(R.string.server_active_unauth),
                                         isServerActive = true,
                                         lastError = auth.message
                                     )
@@ -673,7 +792,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             is ConnectionResult.NetworkError -> {
                                 _uiState.value = _uiState.value.copy(
                                     sync = _uiState.value.sync.copy(
-                                        serverStatusText = "Servidor: activo (sin autenticar)",
+                                        serverStatusText = getApplication<Application>().getString(R.string.server_active_unauth),
                                         isServerActive = true,
                                         lastError = auth.message
                                     )
@@ -683,7 +802,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             is ConnectionResult.UnknownError -> {
                                 _uiState.value = _uiState.value.copy(
                                     sync = _uiState.value.sync.copy(
-                                        serverStatusText = "Servidor: activo (sin autenticar)",
+                                        serverStatusText = getApplication<Application>().getString(R.string.server_active_unauth),
                                         isServerActive = true,
                                         lastError = auth.message
                                     )
@@ -691,12 +810,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             }
                         }
                     }
+
+                    loadLibraryViews()
                 }
 
                 is ConnectionResult.NetworkError -> {
                     _uiState.value = _uiState.value.copy(
                         sync = _uiState.value.sync.copy(
-                            serverStatusText = "Servidor: inactivo",
+                            serverStatusText = getApplication<Application>().getString(R.string.server_inactive),
                             isServerActive = false,
                             lastError = status.message
                         )
@@ -706,7 +827,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 is ConnectionResult.AuthFailure -> {
                     _uiState.value = _uiState.value.copy(
                         sync = _uiState.value.sync.copy(
-                            serverStatusText = "Servidor: configuración incompleta",
+                            serverStatusText = getApplication<Application>().getString(R.string.server_config_incomplete),
                             isServerActive = false,
                             lastError = status.message
                         )
@@ -716,7 +837,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 is ConnectionResult.UnknownError -> {
                     _uiState.value = _uiState.value.copy(
                         sync = _uiState.value.sync.copy(
-                            serverStatusText = "Servidor: estado desconocido",
+                            serverStatusText = getApplication<Application>().getString(R.string.server_unknown_state),
                             isServerActive = false,
                             lastError = status.message
                         )
@@ -738,12 +859,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         triggerSyncWithScope(SyncScope.Series)
     }
 
+    fun triggerOthersSync() {
+        triggerSyncWithScope(SyncScope.Others)
+    }
+
     fun triggerRecentMoviesSync() {
         triggerSyncWithScope(scope = SyncScope.Movies, onlyRecentAdded = true)
     }
 
     fun triggerRecentSeriesSync() {
         triggerSyncWithScope(scope = SyncScope.Series, onlyRecentAdded = true)
+    }
+
+    fun triggerRecentOthersSync() {
+        triggerSyncWithScope(scope = SyncScope.Others, onlyRecentAdded = true)
     }
 
     fun triggerFastSync() {
@@ -756,6 +885,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun triggerFastSeriesSync() {
         triggerFastSyncWithScope(SyncScope.Series)
+    }
+
+    fun triggerFastOthersSync() {
+        triggerFastSyncWithScope(SyncScope.Others)
     }
 
     fun triggerDetailsSync() {
@@ -781,6 +914,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 val forceFullMovies = !onlyRecentAdded && (scope == SyncScope.All || scope == SyncScope.Movies)
                 val forceFullSeries = !onlyRecentAdded && (scope == SyncScope.All || scope == SyncScope.Series)
+                val forceFullOthers = !onlyRecentAdded && (scope == SyncScope.All || scope == SyncScope.Others)
 
                 _uiState.value = _uiState.value.copy(
                     sync = _uiState.value.sync.copy(
@@ -788,11 +922,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         processed = 0,
                         total = 0,
                         phaseText = if (onlyRecentAdded) {
-                            "Sincronizando últimos añadidos"
+                            getApplication<Application>().getString(R.string.phase_syncing_recent)
                         } else if (forceFullMovies) {
-                            "Refrescando catálogo de películas (completo)"
+                            getApplication<Application>().getString(R.string.phase_refreshing_movies_full)
                         } else {
-                            "Sincronizando catálogo"
+                            getApplication<Application>().getString(R.string.phase_syncing_catalog)
                         },
                         lastError = null
                     )
@@ -802,10 +936,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     scope = scope,
                     forceFullMovies = forceFullMovies,
                     forceFullSeries = forceFullSeries,
-                    modeLabel = if (onlyRecentAdded) "Últimos añadidos" else "Normal"
+                    forceFullOthers = forceFullOthers,
+                    modeLabel = if (onlyRecentAdded) {
+                        getApplication<Application>().getString(R.string.mode_recently_added)
+                    } else {
+                        getApplication<Application>().getString(R.string.mode_normal)
+                    }
                 ) { processed, total, phase ->
                     val phaseText = if (forceFullMovies && phase == SyncProgressPhase.FetchingMoviesCatalog) {
-                        "Refrescando catálogo de películas (completo)"
+                        getApplication<Application>().getString(R.string.phase_refreshing_movies_full)
                     } else {
                         phase.toUiText()
                     }
@@ -825,9 +964,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.value = _uiState.value.copy(
                     sync = _uiState.value.sync.copy(
                         isSyncing = false,
-                        serverStatusText = "Servidor: activo",
+                        serverStatusText = getApplication<Application>().getString(R.string.server_active),
                         isServerActive = true,
-                        phaseText = "Sincronización completada",
+                        phaseText = getApplication<Application>().getString(R.string.phase_sync_completed),
                         lastSyncText = lastSync?.let { formatLastSync(it) },
                         syncHistory = syncHistory,
                         lastError = when (result) {
@@ -837,11 +976,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     )
                 )
+
+                if (result == SyncResult.Success) {
+                    loadLibraryViews()
+                }
             } catch (_: CancellationException) {
                 _uiState.value = _uiState.value.copy(
                     sync = _uiState.value.sync.copy(
                         isSyncing = false,
-                        phaseText = "Sincronización cancelada"
+                        phaseText = getApplication<Application>().getString(R.string.phase_sync_cancelled)
                     )
                 )
             } finally {
@@ -864,7 +1007,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         isSyncing = true,
                         processed = 0,
                         total = 0,
-                        phaseText = "Sincronizando catálogo",
+                        phaseText = getApplication<Application>().getString(R.string.phase_syncing_catalog),
                         lastError = null
                     )
                 )
@@ -886,9 +1029,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.value = _uiState.value.copy(
                     sync = _uiState.value.sync.copy(
                         isSyncing = false,
-                        serverStatusText = "Servidor: activo",
+                        serverStatusText = getApplication<Application>().getString(R.string.server_active),
                         isServerActive = true,
-                        phaseText = "Sincronización completada",
+                        phaseText = getApplication<Application>().getString(R.string.phase_sync_completed),
                         lastSyncText = lastSync?.let { formatLastSync(it) },
                         syncHistory = syncHistory,
                         lastError = when (result) {
@@ -898,11 +1041,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     )
                 )
+
+                if (result == SyncResult.Success) {
+                    loadLibraryViews()
+                }
             } catch (_: CancellationException) {
                 _uiState.value = _uiState.value.copy(
                     sync = _uiState.value.sync.copy(
                         isSyncing = false,
-                        phaseText = "Sincronización cancelada"
+                        phaseText = getApplication<Application>().getString(R.string.phase_sync_cancelled)
                     )
                 )
             } finally {
@@ -925,7 +1072,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         isSyncing = true,
                         processed = 0,
                         total = 0,
-                        phaseText = "Sincronizando solo detalles",
+                        phaseText = getApplication<Application>().getString(R.string.phase_syncing_details_only),
                         lastError = null
                     )
                 )
@@ -946,9 +1093,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.value = _uiState.value.copy(
                     sync = _uiState.value.sync.copy(
                         isSyncing = false,
-                        serverStatusText = "Servidor: activo",
+                        serverStatusText = getApplication<Application>().getString(R.string.server_active),
                         isServerActive = true,
-                        phaseText = "Sincronización completada",
+                        phaseText = getApplication<Application>().getString(R.string.phase_sync_completed),
                         lastSyncText = lastSync?.let { formatLastSync(it) },
                         syncHistory = syncHistory,
                         lastError = when (result) {
@@ -958,11 +1105,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     )
                 )
+
+                if (result == SyncResult.Success) {
+                    loadLibraryViews()
+                }
             } catch (_: CancellationException) {
                 _uiState.value = _uiState.value.copy(
                     sync = _uiState.value.sync.copy(
                         isSyncing = false,
-                        phaseText = "Sincronización cancelada"
+                        phaseText = getApplication<Application>().getString(R.string.phase_sync_cancelled)
                     )
                 )
             } finally {
@@ -980,7 +1131,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(
             sync = _uiState.value.sync.copy(
                 isSyncing = false,
-                phaseText = "Sincronización cancelada",
+                phaseText = getApplication<Application>().getString(R.string.phase_sync_cancelled),
                 lastError = partialSyncWarning
             )
         )
@@ -1007,7 +1158,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     isSyncing = true,
                     processed = 0,
                     total = 0,
-                    phaseText = "Sincronizando catálogo",
+                    phaseText = getApplication<Application>().getString(R.string.phase_syncing_catalog),
                     lastError = null
                 )
             )
@@ -1032,9 +1183,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.value = _uiState.value.copy(
                 sync = _uiState.value.sync.copy(
                     isSyncing = false,
-                    serverStatusText = "Servidor: activo",
+                    serverStatusText = getApplication<Application>().getString(R.string.server_active),
                     isServerActive = true,
-                    phaseText = "Sincronización completada",
+                    phaseText = getApplication<Application>().getString(R.string.phase_sync_completed),
                     lastSyncText = lastSync?.let { formatLastSync(it) },
                     syncHistory = syncHistory,
                     lastError = when (result) {
@@ -1044,6 +1195,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 )
             )
+
+            if (result == SyncResult.Success) {
+                loadLibraryViews()
+            }
         }
     }
 
@@ -1058,24 +1213,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun testConnection(onResult: (Boolean, String) -> Unit) {
         viewModelScope.launch {
+            val config = _uiState.value.config
             when (val status = withTimeoutOrNull(12_000L) {
-                repository.checkServerStatus()
-            } ?: ConnectionResult.NetworkError("Tiempo de conexión agotado al validar el servidor")) {
+                repository.checkServerStatus(
+                    serverAddress = config.serverAddress,
+                    port = config.port
+                )
+            } ?: ConnectionResult.NetworkError(getApplication<Application>().getString(R.string.timeout_validating_server))) {
                 ConnectionResult.Success -> {
                     _uiState.value = _uiState.value.copy(
                         sync = _uiState.value.sync.copy(
-                            serverStatusText = "Servidor: activo",
+                            serverStatusText = getApplication<Application>().getString(R.string.server_active),
                             isServerActive = true,
                             lastError = null
                         )
                     )
-                    onResult(true, "Conexión correcta con el servidor")
+                    onResult(true, getApplication<Application>().getString(R.string.test_connection_success))
                 }
 
                 is ConnectionResult.NetworkError -> {
                     _uiState.value = _uiState.value.copy(
                         sync = _uiState.value.sync.copy(
-                            serverStatusText = "Servidor: inactivo",
+                            serverStatusText = getApplication<Application>().getString(R.string.server_inactive),
                             isServerActive = false,
                             lastError = status.message
                         )
@@ -1086,7 +1245,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 is ConnectionResult.AuthFailure -> {
                     _uiState.value = _uiState.value.copy(
                         sync = _uiState.value.sync.copy(
-                            serverStatusText = "Servidor: configuración incompleta",
+                            serverStatusText = getApplication<Application>().getString(R.string.server_config_incomplete),
                             isServerActive = false,
                             lastError = status.message
                         )
@@ -1097,7 +1256,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 is ConnectionResult.UnknownError -> {
                     _uiState.value = _uiState.value.copy(
                         sync = _uiState.value.sync.copy(
-                            serverStatusText = "Servidor: estado desconocido",
+                            serverStatusText = getApplication<Application>().getString(R.string.server_unknown_state),
                             isServerActive = false,
                             lastError = status.message
                         )
@@ -1129,6 +1288,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return perFilterMatches.reduce { acc, set -> acc.intersect(set) }
     }
 
+    @SuppressLint("UsableSpace")
     private fun refreshDatabaseSize() {
         val app = getApplication<Application>()
         val dbName = "biblioteca_jelly.db"
@@ -1147,7 +1307,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val freeBytes = app.filesDir.usableSpace
         val ratioText = if (freeBytes > 0L) {
             val percent = (totalBytes.toDouble() / freeBytes.toDouble()) * 100.0
-            String.format(Locale.getDefault(), " (%.2f%% del espacio libre)", percent)
+            String.format(getApplication<Application>().getString(R.string.free_space_ratio), percent)
         } else {
             ""
         }
@@ -1163,8 +1323,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         _uiState.value = _uiState.value.copy(
             config = _uiState.value.config.copy(
-                databaseSizeText = "Tamaño base de datos: ${formatBytes(totalBytes)}$ratioText",
-                postersSizeText = "Portadas locales: $postersCount archivos / ${formatBytes(postersBytes)}"
+                databaseSizeText = getApplication<Application>().getString(
+                    R.string.db_size_text,
+                    formatBytes(totalBytes),
+                    ratioText
+                ),
+                postersSizeText = getApplication<Application>().getString(
+                    R.string.posters_size_text,
+                    postersCount,
+                    formatBytes(postersBytes)
+                )
             )
         )
     }
@@ -1189,7 +1357,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ConnectionResult.Success -> {
                 _uiState.value = _uiState.value.copy(
                     sync = _uiState.value.sync.copy(
-                        serverStatusText = "Servidor: activo",
+                        serverStatusText = getApplication<Application>().getString(R.string.server_active),
                         isServerActive = true
                     )
                 )
@@ -1199,7 +1367,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             is ConnectionResult.NetworkError -> {
                 _uiState.value = _uiState.value.copy(
                     sync = _uiState.value.sync.copy(
-                        serverStatusText = "Servidor: inactivo",
+                        serverStatusText = getApplication<Application>().getString(R.string.server_inactive),
                         isServerActive = false,
                         lastError = status.message
                     )
@@ -1210,7 +1378,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             is ConnectionResult.AuthFailure -> {
                 _uiState.value = _uiState.value.copy(
                     sync = _uiState.value.sync.copy(
-                        serverStatusText = "Servidor: configuración incompleta",
+                        serverStatusText = getApplication<Application>().getString(R.string.server_config_incomplete),
                         isServerActive = false,
                         lastError = status.message
                     )
@@ -1221,7 +1389,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             is ConnectionResult.UnknownError -> {
                 _uiState.value = _uiState.value.copy(
                     sync = _uiState.value.sync.copy(
-                        serverStatusText = "Servidor: estado desconocido",
+                        serverStatusText = getApplication<Application>().getString(R.string.server_unknown_state),
                         isServerActive = false,
                         lastError = status.message
                     )
@@ -1236,7 +1404,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ConnectionResult.Success -> {
                 _uiState.value = _uiState.value.copy(
                     sync = _uiState.value.sync.copy(
-                        serverStatusText = "Servidor: activo",
+                        serverStatusText = getApplication<Application>().getString(R.string.server_active),
                         isServerActive = true
                     )
                 )
@@ -1245,7 +1413,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             else -> {
                 _uiState.value = _uiState.value.copy(
                     sync = _uiState.value.sync.copy(
-                        serverStatusText = "Servidor: inactivo",
+                        serverStatusText = getApplication<Application>().getString(R.string.server_inactive),
                         isServerActive = false
                     )
                 )
@@ -1297,10 +1465,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun SyncProgressPhase.toUiText(): String {
         return when (this) {
-            SyncProgressPhase.FetchingMoviesCatalog -> "Sincronizando películas (catálogo)"
-            SyncProgressPhase.FetchingMoviesDetails -> "Sincronizando películas (detalles)"
-            SyncProgressPhase.FetchingSeries -> "Sincronizando series"
-            SyncProgressPhase.SeriesDetails -> "Refrescando detalles de series"
+            SyncProgressPhase.FetchingMoviesCatalog -> getApplication<Application>().getString(R.string.phase_syncing_catalog)
+            SyncProgressPhase.FetchingMoviesDetails -> getApplication<Application>().getString(R.string.phase_syncing_details_only)
+            SyncProgressPhase.FetchingSeries -> getApplication<Application>().getString(R.string.phase_syncing_catalog)
+            SyncProgressPhase.SeriesDetails -> getApplication<Application>().getString(R.string.phase_syncing_details_only)
         }
     }
 }

@@ -15,8 +15,8 @@ android {
         applicationId = "com.zynerio.bibliotecajelly"
         minSdk = 24
         targetSdk = 36
-        versionCode = 6
-        versionName = "1.6"
+        versionCode = 8
+        versionName = "2.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

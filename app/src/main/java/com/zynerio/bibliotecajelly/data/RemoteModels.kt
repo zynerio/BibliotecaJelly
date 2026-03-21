@@ -34,13 +34,17 @@ data class BaseItemDto(
     val RunTimeTicks: Long?,
     val ImageTags: Map<String, String>?,
     val ParentId: String?,
+    val AncestorIds: List<String>?,
     val SeriesId: String?,
     val SeasonId: String?,
     val Genres: List<String>?,
     val IndexNumber: Int?,
     val ParentIndexNumber: Int?,
+    val CollectionType: String?,
     val MediaStreams: List<MediaStream>?,
-    val MediaSources: List<MediaSource>?
+    val MediaSources: List<MediaSource>?,
+    val ProductionYear: Int? = null,
+    val Path: String? = null
 )
 
 data class MediaStream(
@@ -80,6 +84,12 @@ interface JellyfinApi {
         @Query("Limit") limit: Int? = null,
         @Query("SeriesId") seriesId: String? = null,
         @Query("ParentId") parentId: String? = null
+    ): ItemsResponse
+
+    @GET("Users/{userId}/Views")
+    suspend fun getViews(
+        @Path("userId") userId: String,
+        @Query("Fields") fields: String? = null
     ): ItemsResponse
 
     @GET("Users/{userId}/Items/{itemId}")

@@ -10,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.Arrangement
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -45,6 +47,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.CircularProgressIndicator
@@ -70,6 +73,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -78,7 +82,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.bumptech.glide.Glide
+import com.zynerio.bibliotecajelly.data.LibraryViewInfo
 import com.zynerio.bibliotecajelly.data.MovieEntity
+import com.zynerio.bibliotecajelly.data.OtherMediaEntity
 import com.zynerio.bibliotecajelly.data.SeriesEntity
 import com.zynerio.bibliotecajelly.data.ListDisplayMode
 import com.zynerio.bibliotecajelly.data.LibrarySortMode
@@ -128,9 +134,14 @@ fun BibliotecaJellyApp(viewModel: MainViewModel) {
     val uiState by viewModel.uiState.collectAsState()
     val movies by viewModel.movies.collectAsState()
     val series by viewModel.series.collectAsState()
+    val others by viewModel.others.collectAsState()
+    val libraryViews by viewModel.libraryViews.collectAsState()
+    val libraryCoverOverrides by viewModel.libraryCoverOverrides.collectAsState()
+    val showLibraryCoverHint by viewModel.showLibraryCoverHint.collectAsState()
     val isConfigured by viewModel.isConfigured.collectAsState()
     val totalMovies by viewModel.totalMoviesCount.collectAsState()
     val totalSeries by viewModel.totalSeriesCount.collectAsState()
+    val totalOthers by viewModel.totalOthersCount.collectAsState()
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
     val installedVersionName = remember(context) {
@@ -156,6 +167,9 @@ fun BibliotecaJellyApp(viewModel: MainViewModel) {
                 onMovieDetailsSyncModeChanged = viewModel::onMovieDetailsSyncModeChanged,
                 onListDisplayModeChanged = viewModel::onListDisplayModeChanged,
                 onDownloadPostersOfflineChanged = viewModel::onDownloadPostersOfflineChanged,
+                onShowFilePathChanged = viewModel::onShowFilePathChanged,
+                onLibrariesAdvancedViewChanged = viewModel::onLibrariesAdvancedViewChanged,
+                onClearSyncHistory = viewModel::clearSyncHistory,
                 onClearLocalData = viewModel::clearLocalData,
                 onTestConnection = viewModel::testConnection,
                 onSave = viewModel::saveConfig,
@@ -167,18 +181,26 @@ fun BibliotecaJellyApp(viewModel: MainViewModel) {
                 uiState = uiState,
                 movies = movies,
                 series = series,
+                others = others,
+                libraryViews = libraryViews,
+                libraryCoverOverrides = libraryCoverOverrides,
+                showLibraryCoverHint = showLibraryCoverHint,
                 totalMovies = totalMovies,
                 totalSeries = totalSeries,
+                totalOthers = totalOthers,
                 onSearchChanged = viewModel::onSearchQueryChanged,
                 onTabSelected = viewModel::onTabSelected,
                 onSyncAll = viewModel::triggerManualSync,
                 onSyncMovies = viewModel::triggerMoviesSync,
                 onSyncSeries = viewModel::triggerSeriesSync,
+                onSyncOthers = viewModel::triggerOthersSync,
                 onSyncRecentMovies = viewModel::triggerRecentMoviesSync,
                 onSyncRecentSeries = viewModel::triggerRecentSeriesSync,
+                onSyncRecentOthers = viewModel::triggerRecentOthersSync,
                 onSyncFastAll = viewModel::triggerFastSync,
                 onSyncFastMovies = viewModel::triggerFastMoviesSync,
                 onSyncFastSeries = viewModel::triggerFastSeriesSync,
+                onSyncFastOthers = viewModel::triggerFastOthersSync,
                 onSyncDetailsAll = viewModel::triggerDetailsSync,
                 onSyncDetailsMovies = viewModel::triggerDetailsMoviesSync,
                 onSyncDetailsSeries = viewModel::triggerDetailsSeriesSync,
@@ -191,12 +213,18 @@ fun BibliotecaJellyApp(viewModel: MainViewModel) {
                 onFavoriteFilterToggled = viewModel::onFavoriteFilterToggled,
                 onMovieFavoriteToggled = viewModel::onMovieFavoriteToggled,
                 onSeriesFavoriteToggled = viewModel::onSeriesFavoriteToggled,
-                onMarkNovedadesAsSeen = viewModel::markNovedadesAsSeen,
+                onMarkNovedadesAsSeen = { markUntilEpochMillis ->
+                    viewModel.markNovedadesAsSeen(markUntilEpochMillis)
+                },
                 onClearTechnicalFilter = viewModel::clearTechnicalFilter,
                 onClearAllFilters = viewModel::clearAllActiveFilters,
                 onClearAllFiltersAcrossTabs = viewModel::clearAllFiltersAcrossTabs,
                 onMovieDetailsRefresh = viewModel::refreshMovieDetails,
                 onSeriesDetailsRefresh = viewModel::refreshSeriesDetails,
+                onClearSyncHistory = viewModel::clearSyncHistory,
+                onLibraryCoverSelected = viewModel::setLibraryCoverOverride,
+                onLibraryCoverReset = viewModel::clearLibraryCoverOverride,
+                onDismissLibraryCoverHint = viewModel::dismissLibraryCoverHint,
                 seriesDetailsProvider = { seriesId ->
                     viewModel.seriesSeasons(seriesId)
                 },
@@ -208,10 +236,16 @@ fun BibliotecaJellyApp(viewModel: MainViewModel) {
     if (uiState.update.showDialog) {
         AlertDialog(
             onDismissRequest = viewModel::postponeUpdateDialog,
-            title = { Text("Nueva versión disponible") },
+            title = { Text(stringResource(R.string.update_available_title)) },
             text = {
-                val latestVersion = uiState.update.latestVersion.orEmpty().ifBlank { "nueva release" }
-                Text("Hay una nueva versión disponible: $latestVersion. Versión instalada: $installedVersionName.")
+                val latestVersion = uiState.update.latestVersion.orEmpty().ifBlank { "-" }
+                Text(
+                    stringResource(
+                        R.string.update_available_message,
+                        latestVersion,
+                        installedVersionName
+                    )
+                )
             },
             confirmButton = {
                 Button(onClick = {
@@ -221,12 +255,12 @@ fun BibliotecaJellyApp(viewModel: MainViewModel) {
                     }
                     viewModel.dismissUpdateDialog()
                 }) {
-                    Text("Descargar")
+                    Text(stringResource(R.string.download))
                 }
             },
             dismissButton = {
                 OutlinedButton(onClick = viewModel::postponeUpdateDialog) {
-                    Text("Más tarde")
+                    Text(stringResource(R.string.later))
                 }
             }
         )
@@ -246,6 +280,9 @@ fun ConfigScreen(
     onMovieDetailsSyncModeChanged: (MovieDetailsSyncMode) -> Unit,
     onListDisplayModeChanged: (ListDisplayMode) -> Unit,
     onDownloadPostersOfflineChanged: (Boolean) -> Unit,
+    onShowFilePathChanged: (Boolean) -> Unit,
+    onLibrariesAdvancedViewChanged: (Boolean) -> Unit,
+    onClearSyncHistory: () -> Unit,
     onClearLocalData: (ClearDataScope) -> Unit,
     onTestConnection: ((Boolean, String) -> Unit) -> Unit,
     onSave: () -> Unit,
@@ -292,7 +329,7 @@ fun ConfigScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(
-                text = "Configuración del servidor Jellyfin",
+                text = stringResource(R.string.server_config_title),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
@@ -301,17 +338,17 @@ fun ConfigScreen(
                 Tab(
                     selected = optionsTabIndex.intValue == 0,
                     onClick = { optionsTabIndex.intValue = 0 },
-                    text = { Text("Servidor") }
+                    text = { Text(stringResource(R.string.server)) }
                 )
                 Tab(
                     selected = optionsTabIndex.intValue == 1,
                     onClick = { optionsTabIndex.intValue = 1 },
-                    text = { Text("Sincronización") }
+                    text = { Text(stringResource(R.string.sync)) }
                 )
                 Tab(
                     selected = optionsTabIndex.intValue == 2,
                     onClick = { optionsTabIndex.intValue = 2 },
-                    text = { Text("Datos") }
+                    text = { Text(stringResource(R.string.data)) }
                 )
             }
 
@@ -319,28 +356,28 @@ fun ConfigScreen(
                 TextField(
                     value = config.serverAddress,
                     onValueChange = onServerChanged,
-                    label = { Text("Dirección del servidor (IP o dominio)") },
+                    label = { Text(stringResource(R.string.server_address_label)) },
                     modifier = Modifier.fillMaxWidth()
                 )
 
                 TextField(
                     value = config.port,
                     onValueChange = onPortChanged,
-                    label = { Text("Puerto") },
+                    label = { Text(stringResource(R.string.port)) },
                     modifier = Modifier.fillMaxWidth()
                 )
 
                 TextField(
                     value = config.username,
                     onValueChange = onUsernameChanged,
-                    label = { Text("Usuario") },
+                    label = { Text(stringResource(R.string.username)) },
                     modifier = Modifier.fillMaxWidth()
                 )
 
                 TextField(
                     value = config.password,
                     onValueChange = onPasswordChanged,
-                    label = { Text("Contraseña") },
+                    label = { Text(stringResource(R.string.password)) },
                     visualTransformation = PasswordVisualTransformation(),
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -348,14 +385,18 @@ fun ConfigScreen(
                 TextField(
                     value = config.apiKey,
                     onValueChange = onApiKeyChanged,
-                    label = { Text("API key (opcional)") },
+                    label = { Text(stringResource(R.string.api_key_optional)) },
                     modifier = Modifier.fillMaxWidth()
                 )
 
                 OutlinedButton(
                     onClick = {
                         onTestConnection { success, message ->
-                            connectionDialogTitle.value = if (success) "Conexión correcta" else "Error de conexión"
+                            connectionDialogTitle.value = if (success) {
+                                context.getString(R.string.connection_ok)
+                            } else {
+                                context.getString(R.string.connection_error)
+                            }
                             connectionDialogMessage.value = message
                             showConnectionDialog.value = true
                         }
@@ -363,13 +404,13 @@ fun ConfigScreen(
                     enabled = !config.isValidating,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Probar conexión")
+                    Text(stringResource(R.string.test_connection))
                 }
             }
 
             if (optionsTabIndex.intValue == 1) {
                 Text(
-                    text = "Sincronización automática",
+                    text = stringResource(R.string.auto_sync_title),
                     style = MaterialTheme.typography.titleMedium
                 )
 
@@ -380,7 +421,7 @@ fun ConfigScreen(
                         selected = config.autoSyncMode == com.zynerio.bibliotecajelly.data.AutoSyncMode.OnStart,
                         onClick = { onAutoSyncModeChanged(com.zynerio.bibliotecajelly.data.AutoSyncMode.OnStart) }
                     )
-                    Text("Al iniciar la aplicación")
+                    Text(stringResource(R.string.auto_sync_on_start))
                 }
 
                 Row(
@@ -390,7 +431,7 @@ fun ConfigScreen(
                         selected = config.autoSyncMode == com.zynerio.bibliotecajelly.data.AutoSyncMode.OnClose,
                         onClick = { onAutoSyncModeChanged(com.zynerio.bibliotecajelly.data.AutoSyncMode.OnClose) }
                     )
-                    Text("Al cerrar la aplicación")
+                    Text(stringResource(R.string.auto_sync_on_close))
                 }
 
                 Row(
@@ -400,11 +441,11 @@ fun ConfigScreen(
                         selected = config.autoSyncMode == com.zynerio.bibliotecajelly.data.AutoSyncMode.Manual,
                         onClick = { onAutoSyncModeChanged(com.zynerio.bibliotecajelly.data.AutoSyncMode.Manual) }
                     )
-                    Text("Solo manual")
+                    Text(stringResource(R.string.auto_sync_manual_only))
                 }
 
                 Text(
-                    text = "Detalles de películas",
+                    text = stringResource(R.string.movie_details_title),
                     style = MaterialTheme.typography.titleMedium
                 )
 
@@ -413,7 +454,7 @@ fun ConfigScreen(
                         selected = config.movieDetailsSyncMode == MovieDetailsSyncMode.All,
                         onClick = { onMovieDetailsSyncModeChanged(MovieDetailsSyncMode.All) }
                     )
-                    Text("Todos (más completo, más lento)")
+                    Text(stringResource(R.string.movie_details_all))
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -421,11 +462,11 @@ fun ConfigScreen(
                         selected = config.movieDetailsSyncMode == MovieDetailsSyncMode.RecentOnly,
                         onClick = { onMovieDetailsSyncModeChanged(MovieDetailsSyncMode.RecentOnly) }
                     )
-                    Text("Solo recientes (más rápido)")
+                    Text(stringResource(R.string.movie_details_recent))
                 }
 
                 Text(
-                    text = "Vista de biblioteca",
+                    text = stringResource(R.string.library_view_title),
                     style = MaterialTheme.typography.titleMedium
                 )
 
@@ -434,7 +475,7 @@ fun ConfigScreen(
                         selected = config.listDisplayMode == ListDisplayMode.Infinite,
                         onClick = { onListDisplayModeChanged(ListDisplayMode.Infinite) }
                     )
-                    Text("Listado infinito")
+                    Text(stringResource(R.string.list_infinite))
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -442,11 +483,11 @@ fun ConfigScreen(
                         selected = config.listDisplayMode == ListDisplayMode.Paged50,
                         onClick = { onListDisplayModeChanged(ListDisplayMode.Paged50) }
                     )
-                    Text("Paginado (50 por página, swipe lateral)")
+                    Text(stringResource(R.string.list_paged))
                 }
 
                 Text(
-                    text = "Portadas offline",
+                    text = stringResource(R.string.offline_posters_title),
                     style = MaterialTheme.typography.titleMedium
                 )
 
@@ -455,7 +496,28 @@ fun ConfigScreen(
                         checked = config.downloadPostersOffline,
                         onCheckedChange = { onDownloadPostersOfflineChanged(it) }
                     )
-                    Text("Descargar portadas para uso sin conexión")
+                    Text(stringResource(R.string.download_posters_offline))
+                }
+
+                Text(
+                    text = stringResource(R.string.details_info_title),
+                    style = MaterialTheme.typography.titleMedium
+                )
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = config.showFilePath,
+                        onCheckedChange = { onShowFilePathChanged(it) }
+                    )
+                    Text(stringResource(R.string.show_file_path_details))
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = config.librariesAdvancedView,
+                        onCheckedChange = { onLibrariesAdvancedViewChanged(it) }
+                    )
+                    Text(stringResource(R.string.advanced_libraries_view))
                 }
             }
 
@@ -474,7 +536,7 @@ fun ConfigScreen(
                     onClick = { showSyncHistoryDialog.value = true },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Historial de sincronización")
+                    Text(stringResource(R.string.sync_history))
                 }
             }
 
@@ -499,14 +561,20 @@ fun ConfigScreen(
                 enabled = !config.isValidating,
                 modifier = Modifier.weight(1f)
             ) {
-                Text("Cancelar")
+                Text(stringResource(R.string.cancel))
             }
             Button(
                 onClick = onSave,
                 enabled = !config.isValidating,
                 modifier = Modifier.weight(1f)
             ) {
-                Text(if (config.isValidating) "Validando..." else "Guardar")
+                Text(
+                    if (config.isValidating) {
+                        stringResource(R.string.validating)
+                    } else {
+                        stringResource(R.string.save)
+                    }
+                )
             }
         }
 
@@ -520,7 +588,7 @@ fun ConfigScreen(
             modifier = Modifier.fillMaxWidth()
         ) {
             Text(
-                text = "Borrar datos sincronizados",
+                text = stringResource(R.string.clear_synced_data),
                 color = MaterialTheme.colorScheme.error
             )
         }
@@ -540,7 +608,7 @@ fun ConfigScreen(
             IconButton(onClick = { uriHandler.openUri(PROJECT_GITHUB_URL) }) {
                 Icon(
                     painter = painterResource(id = R.drawable.github),
-                    contentDescription = "Abrir GitHub",
+                    contentDescription = stringResource(R.string.open_github),
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(20.dp)
                 )
@@ -564,7 +632,10 @@ fun ConfigScreen(
                     clearScope.value = ClearDataScope.All
                 },
                 confirmButton = {
-                    val enabled = clearConfirmText.value.equals("BORRAR", ignoreCase = true)
+                    val enabled = clearConfirmText.value.equals(
+                        context.getString(R.string.delete_confirm_word),
+                        ignoreCase = true
+                    )
                     Button(
                         onClick = {
                             showClearDialog.value = false
@@ -573,15 +644,15 @@ fun ConfigScreen(
                             onClearLocalData(clearScope.value)
                             clearScope.value = ClearDataScope.All
                             clearSuccessText.value = when (selectedScope) {
-                                ClearDataScope.All -> "Se borraron películas y series sincronizadas."
-                                ClearDataScope.Movies -> "Se borraron solo las películas sincronizadas."
-                                ClearDataScope.Series -> "Se borraron solo las series sincronizadas."
+                                ClearDataScope.All -> context.getString(R.string.clear_success_all)
+                                ClearDataScope.Movies -> context.getString(R.string.clear_success_movies)
+                                ClearDataScope.Series -> context.getString(R.string.clear_success_series)
                             }
                             showClearSuccess.value = true
                         },
                         enabled = enabled
                     ) {
-                        Text("Borrar")
+                        Text(stringResource(R.string.delete))
                     }
                 },
                 dismissButton = {
@@ -590,21 +661,21 @@ fun ConfigScreen(
                         clearConfirmText.value = ""
                         clearScope.value = ClearDataScope.All
                     }) {
-                        Text("Cancelar")
+                        Text(stringResource(R.string.cancel))
                     }
                 },
                 text = {
                     Column(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("Selecciona qué datos sincronizados quieres borrar.")
+                        Text(stringResource(R.string.clear_data_select_scope))
 
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             androidx.compose.material3.RadioButton(
                                 selected = clearScope.value == ClearDataScope.All,
                                 onClick = { clearScope.value = ClearDataScope.All }
                             )
-                            Text("Todo")
+                            Text(stringResource(R.string.all))
                         }
 
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -612,7 +683,7 @@ fun ConfigScreen(
                                 selected = clearScope.value == ClearDataScope.Movies,
                                 onClick = { clearScope.value = ClearDataScope.Movies }
                             )
-                            Text("Solo películas")
+                            Text(stringResource(R.string.movies_only))
                         }
 
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -620,13 +691,13 @@ fun ConfigScreen(
                                 selected = clearScope.value == ClearDataScope.Series,
                                 onClick = { clearScope.value = ClearDataScope.Series }
                             )
-                            Text("Solo series")
+                            Text(stringResource(R.string.series_only))
                         }
 
                         TextField(
                             value = clearConfirmText.value,
                             onValueChange = { clearConfirmText.value = it },
-                            label = { Text("Escribe BORRAR para confirmar") },
+                            label = { Text(stringResource(R.string.type_delete_confirm)) },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -640,7 +711,7 @@ fun ConfigScreen(
                 onDismissRequest = { showConnectionDialog.value = false },
                 confirmButton = {
                     Button(onClick = { showConnectionDialog.value = false }) {
-                        Text("Cerrar")
+                        Text(stringResource(R.string.close))
                     }
                 },
                 title = { Text(connectionDialogTitle.value) },
@@ -653,16 +724,34 @@ fun ConfigScreen(
                 onDismissRequest = { showSyncHistoryDialog.value = false },
                 confirmButton = {
                     Button(onClick = { showSyncHistoryDialog.value = false }) {
-                        Text("Cerrar")
+                        Text(stringResource(R.string.close))
                     }
                 },
-                title = { Text("Historial de sincronización") },
+                dismissButton = {
+                    OutlinedButton(
+                        onClick = {
+                            onClearSyncHistory()
+                            showSyncHistoryDialog.value = false
+                        }
+                    ) {
+                        Text(
+                            stringResource(R.string.clear_history),
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                },
+                title = { Text(stringResource(R.string.sync_history)) },
                 text = {
                     if (uiState.sync.syncHistory.isEmpty()) {
-                        Text("Sin historial todavía")
+                        Text(stringResource(R.string.empty_history))
                     } else {
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            uiState.sync.syncHistory.take(20).forEach { entry ->
+                        Column(
+                            modifier = Modifier
+                                .heightIn(max = 400.dp)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            uiState.sync.syncHistory.forEach { entry ->
                                 Text(
                                     text = entry,
                                     style = MaterialTheme.typography.bodySmall
@@ -682,18 +771,26 @@ fun LibraryScreen(
     uiState: MainUiState,
     movies: List<MovieEntity>,
     series: List<SeriesEntity>,
+    others: List<OtherMediaEntity>,
+    libraryViews: List<LibraryViewInfo>,
+    libraryCoverOverrides: Map<String, String>,
+    showLibraryCoverHint: Boolean,
     totalMovies: Int,
     totalSeries: Int,
+    totalOthers: Int,
     onSearchChanged: (String) -> Unit,
     onTabSelected: (LibraryTab) -> Unit,
     onSyncAll: () -> Unit,
     onSyncMovies: () -> Unit,
     onSyncSeries: () -> Unit,
+    onSyncOthers: () -> Unit,
     onSyncRecentMovies: () -> Unit,
     onSyncRecentSeries: () -> Unit,
+    onSyncRecentOthers: () -> Unit,
     onSyncFastAll: () -> Unit,
     onSyncFastMovies: () -> Unit,
     onSyncFastSeries: () -> Unit,
+    onSyncFastOthers: () -> Unit,
     onSyncDetailsAll: () -> Unit,
     onSyncDetailsMovies: () -> Unit,
     onSyncDetailsSeries: () -> Unit,
@@ -706,12 +803,16 @@ fun LibraryScreen(
     onFavoriteFilterToggled: () -> Unit,
     onMovieFavoriteToggled: (String, Boolean) -> Unit,
     onSeriesFavoriteToggled: (String, Boolean) -> Unit,
-    onMarkNovedadesAsSeen: () -> Unit,
+    onMarkNovedadesAsSeen: (Long?) -> Unit,
     onClearTechnicalFilter: () -> Unit,
     onClearAllFilters: () -> Unit,
     onClearAllFiltersAcrossTabs: () -> Unit,
     onMovieDetailsRefresh: suspend (String) -> Unit,
     onSeriesDetailsRefresh: suspend (String) -> Unit,
+    onClearSyncHistory: () -> Unit,
+    onLibraryCoverSelected: (String, String) -> Unit,
+    onLibraryCoverReset: (String) -> Unit,
+    onDismissLibraryCoverHint: () -> Unit,
     seriesDetailsProvider: (String) -> kotlinx.coroutines.flow.Flow<List<com.zynerio.bibliotecajelly.data.SeasonEntity>>,
     modifier: Modifier = Modifier
 ) {
@@ -723,21 +824,35 @@ fun LibraryScreen(
     val movieRefreshingId = remember { mutableStateOf<String?>(null) }
     val selectedSeries = remember { mutableStateOf<SeriesEntity?>(null) }
     val seriesRefreshInProgress = remember { mutableStateOf(false) }
+    val selectedOtherGroupType = remember { mutableStateOf<String?>(null) }
+    val selectedOtherLibraryFilter = remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     val showSyncDialog = remember { mutableStateOf(false) }
     val showSyncHistoryDialog = remember { mutableStateOf(false) }
+    val selectedAdvancedLibrary = remember { mutableStateOf<String?>(null) }
+    val selectedLibraryForCoverDialog = remember { mutableStateOf<String?>(null) }
 
-    val genreFilters = if (library.selectedTab == LibraryTab.Movies) {
-        library.selectedMovieGenres
-    } else {
-        library.selectedSeriesGenres
+    val isAdvancedMode = uiState.config.librariesAdvancedView
+    val isAdvancedOverview = isAdvancedMode && selectedAdvancedLibrary.value.isNullOrBlank()
+    val isAdvancedLibraryView = isAdvancedMode && !selectedAdvancedLibrary.value.isNullOrBlank()
+
+    LaunchedEffect(isAdvancedMode) {
+        if (!isAdvancedMode) {
+            selectedAdvancedLibrary.value = null
+        }
     }
 
-    val technicalFilters = if (library.selectedTab == LibraryTab.Movies) {
-        library.selectedMovieTechnicalFilters
-    } else {
-        library.selectedSeriesTechnicalFilters
+    val genreFilters = when (library.selectedTab) {
+        LibraryTab.Movies -> library.selectedMovieGenres
+        LibraryTab.Series -> library.selectedSeriesGenres
+        LibraryTab.Others -> emptySet()
+    }
+
+    val technicalFilters = when (library.selectedTab) {
+        LibraryTab.Movies -> library.selectedMovieTechnicalFilters
+        LibraryTab.Series -> library.selectedSeriesTechnicalFilters
+        LibraryTab.Others -> emptyMap()
     }
 
     val activeFiltersCount = buildList {
@@ -835,57 +950,210 @@ fun LibraryScreen(
         )
     }
 
-    val activeFavoriteOnly = if (library.selectedTab == LibraryTab.Movies) {
-        library.showOnlyMovieFavorites
-    } else {
-        library.showOnlySeriesFavorites
+    val sortedOthers = others.sortedWith(
+        compareByDescending<OtherMediaEntity> { it.createdUtcMillis ?: Long.MIN_VALUE }
+            .thenBy { it.title.lowercase() }
+    )
+
+    val unassignedLibraryLabel = stringResource(R.string.library_unassigned)
+
+    val movieLibrariesCount = sortedMovies
+        .groupingBy { it.libraryName ?: unassignedLibraryLabel }
+        .eachCount()
+    val seriesLibrariesCount = sortedSeries
+        .groupingBy { it.libraryName ?: unassignedLibraryLabel }
+        .eachCount()
+    val otherLibrariesCount = sortedOthers
+        .groupingBy { it.libraryName ?: unassignedLibraryLabel }
+        .eachCount()
+    val allLibraries = (movieLibrariesCount.keys + seriesLibrariesCount.keys + otherLibrariesCount.keys)
+        .distinct()
+        .filter { it != unassignedLibraryLabel }
+        .sorted()
+    val libraryPosterUrls = remember(libraryViews, sortedMovies, sortedSeries) {
+        buildMap {
+            libraryViews.forEach { libraryView ->
+                if (libraryView.imageUrl != null) {
+                    put(libraryView.name, libraryView.imageUrl)
+                }
+            }
+            sortedMovies.forEach { movie ->
+                val libraryName = movie.libraryName
+                if (!libraryName.isNullOrBlank() && !containsKey(libraryName) && !movie.posterUrl.isNullOrBlank()) {
+                    put(libraryName, movie.posterUrl)
+                }
+            }
+            sortedSeries.forEach { item ->
+                val libraryName = item.libraryName
+                if (!libraryName.isNullOrBlank() && !containsKey(libraryName) && !item.posterUrl.isNullOrBlank()) {
+                    put(libraryName, item.posterUrl)
+                }
+            }
+        }
+    }
+    val effectiveLibraryPosterUrls = remember(libraryPosterUrls, libraryCoverOverrides) {
+        buildMap {
+            putAll(libraryPosterUrls)
+            libraryCoverOverrides.forEach { (libraryName, imageUrl) ->
+                put(libraryName, imageUrl)
+            }
+        }
+    }
+    val libraryPosterCandidates = remember(sortedMovies, sortedSeries) {
+        buildMap {
+            val grouped = linkedMapOf<String, LinkedHashSet<String>>()
+            sortedMovies.forEach { movie ->
+                val libraryName = movie.libraryName
+                val posterUrl = movie.posterUrl
+                if (!libraryName.isNullOrBlank() && !posterUrl.isNullOrBlank()) {
+                    grouped.getOrPut(libraryName) { linkedSetOf() }.add(posterUrl)
+                }
+            }
+            sortedSeries.forEach { item ->
+                val libraryName = item.libraryName
+                val posterUrl = item.posterUrl
+                if (!libraryName.isNullOrBlank() && !posterUrl.isNullOrBlank()) {
+                    grouped.getOrPut(libraryName) { linkedSetOf() }.add(posterUrl)
+                }
+            }
+            grouped.forEach { (libraryName, urls) ->
+                put(libraryName, urls.take(18))
+            }
+        }
     }
 
-    val currentItemsMissingCreatedDate = if (library.selectedTab == LibraryTab.Movies) {
-        sortedMovies.count { it.createdUtcMillis == null }
-    } else {
-        sortedSeries.count { it.createdUtcMillis == null }
+    val selectedLibraryName = selectedAdvancedLibrary.value
+    val selectedLibraryMoviesCount = selectedLibraryName?.let { movieLibrariesCount[it] ?: 0 } ?: 0
+    val selectedLibrarySeriesCount = selectedLibraryName?.let { seriesLibrariesCount[it] ?: 0 } ?: 0
+    val selectedLibraryOthersCount = selectedLibraryName?.let { otherLibrariesCount[it] ?: 0 } ?: 0
+
+    LaunchedEffect(
+        isAdvancedMode,
+        selectedLibraryName,
+        selectedLibraryMoviesCount,
+        selectedLibrarySeriesCount,
+        selectedLibraryOthersCount,
+        library.selectedTab
+    ) {
+        if (isAdvancedMode && !selectedLibraryName.isNullOrBlank()) {
+            when {
+                selectedLibraryMoviesCount == 0 && selectedLibrarySeriesCount > 0 && library.selectedTab != LibraryTab.Series -> {
+                    onTabSelected(LibraryTab.Series)
+                }
+
+                selectedLibrarySeriesCount == 0 && selectedLibraryMoviesCount > 0 && library.selectedTab != LibraryTab.Movies -> {
+                    onTabSelected(LibraryTab.Movies)
+                }
+
+                selectedLibraryMoviesCount == 0 && selectedLibrarySeriesCount == 0 && selectedLibraryOthersCount > 0 && library.selectedTab != LibraryTab.Others -> {
+                    onTabSelected(LibraryTab.Others)
+                }
+            }
+        }
     }
 
-    val currentItemsTotal = if (library.selectedTab == LibraryTab.Movies) {
-        sortedMovies.size
-    } else {
-        sortedSeries.size
+    val visibleMovies = when {
+        !isAdvancedMode -> sortedMovies
+        selectedLibraryName.isNullOrBlank() -> emptyList()
+        else -> sortedMovies.filter { (it.libraryName ?: unassignedLibraryLabel) == selectedLibraryName }
     }
 
-    val novedadesMoviesCount = sortedMovies.count {
+    val visibleSeries = when {
+        !isAdvancedMode -> sortedSeries
+        selectedLibraryName.isNullOrBlank() -> emptyList()
+        else -> sortedSeries.filter { (it.libraryName ?: unassignedLibraryLabel) == selectedLibraryName }
+    }
+
+    val visibleOthers = when {
+        !isAdvancedMode -> sortedOthers
+        selectedLibraryName.isNullOrBlank() -> emptyList()
+        else -> sortedOthers.filter { (it.libraryName ?: unassignedLibraryLabel) == selectedLibraryName }
+    }
+
+    val otherLibraryOptions = remember(visibleOthers, unassignedLibraryLabel) {
+        visibleOthers
+            .map { it.libraryName ?: unassignedLibraryLabel }
+            .distinct()
+            .sorted()
+    }
+
+    LaunchedEffect(library.selectedTab, isAdvancedMode, selectedLibraryName, otherLibraryOptions) {
+        if (library.selectedTab != LibraryTab.Others) {
+            selectedOtherLibraryFilter.value = null
+        } else {
+            val currentFilter = selectedOtherLibraryFilter.value
+            if (currentFilter != null && currentFilter !in otherLibraryOptions) {
+                selectedOtherLibraryFilter.value = null
+            }
+        }
+    }
+
+    val filteredVisibleOthers = selectedOtherLibraryFilter.value?.let { selectedLibrary ->
+        visibleOthers.filter { (it.libraryName ?: unassignedLibraryLabel) == selectedLibrary }
+    } ?: visibleOthers
+
+    val activeFavoriteOnly = when (library.selectedTab) {
+        LibraryTab.Movies -> library.showOnlyMovieFavorites
+        LibraryTab.Series -> library.showOnlySeriesFavorites
+        LibraryTab.Others -> false
+    }
+
+    val currentItemsMissingCreatedDate = when (library.selectedTab) {
+        LibraryTab.Movies -> visibleMovies.count { it.createdUtcMillis == null }
+        LibraryTab.Series -> visibleSeries.count { it.createdUtcMillis == null }
+        LibraryTab.Others -> filteredVisibleOthers.count { it.createdUtcMillis == null }
+    }
+
+    val currentItemsTotal = when (library.selectedTab) {
+        LibraryTab.Movies -> visibleMovies.size
+        LibraryTab.Series -> visibleSeries.size
+        LibraryTab.Others -> filteredVisibleOthers.size
+    }
+
+    val novedadesMoviesCount = visibleMovies.count {
         val created = it.createdUtcMillis ?: return@count false
         created > library.lastSeenEpochMillis
     }
 
-    val novedadesSeriesCount = sortedSeries.count {
+    val novedadesSeriesCount = visibleSeries.count {
         val created = it.createdUtcMillis ?: return@count false
         created > library.lastSeenEpochMillis
     }
 
-    val currentNovedadesCount = if (library.selectedTab == LibraryTab.Movies) {
-        novedadesMoviesCount
-    } else {
-        novedadesSeriesCount
+    val novedadesOthersCount = filteredVisibleOthers.count {
+        val created = it.createdUtcMillis ?: return@count false
+        created > library.lastSeenEpochMillis
+    }
+
+    val currentNovedadesCount = when (library.selectedTab) {
+        LibraryTab.Movies -> novedadesMoviesCount
+        LibraryTab.Series -> novedadesSeriesCount
+        LibraryTab.Others -> novedadesOthersCount
+    }
+    val currentMaxCreatedEpochMillis = when (library.selectedTab) {
+        LibraryTab.Movies -> visibleMovies.mapNotNull { it.createdUtcMillis }.maxOrNull()
+        LibraryTab.Series -> visibleSeries.mapNotNull { it.createdUtcMillis }.maxOrNull()
+        LibraryTab.Others -> filteredVisibleOthers.mapNotNull { it.createdUtcMillis }.maxOrNull()
     }
     val currentNovedadesLabel = if (currentNovedadesCount > 99) "99+" else currentNovedadesCount.toString()
 
     val movieNovedadesLabel = if (novedadesMoviesCount > 99) "99+" else novedadesMoviesCount.toString()
     val seriesNovedadesLabel = if (novedadesSeriesCount > 99) "99+" else novedadesSeriesCount.toString()
+    val othersNovedadesLabel = if (novedadesOthersCount > 99) "99+" else novedadesOthersCount.toString()
 
     Column(
         modifier = modifier.fillMaxSize()
     ) {
         TopAppBar(
             title = {
-                Text("Biblioteca Jelly")
+                Text(stringResource(R.string.app_title))
             },
             actions = {
                 Button(onClick = onOpenConfig) {
-                    Text("Configurar")
+                    Text(stringResource(R.string.configure))
                 }
                 Button(onClick = { showSyncDialog.value = true }) {
-                    Text("Sincronizar")
+                    Text(stringResource(R.string.sync))
                 }
             }
         )
@@ -928,14 +1196,14 @@ fun LibraryScreen(
                         )
                     }
                     OutlinedButton(onClick = onCancelSync) {
-                        Text("Parar")
+                        Text(stringResource(R.string.stop))
                     }
                 }
             }
         }
 
         if (sync.lastError != null) {
-            val isCancelNotice = sync.lastError.startsWith("Sincronización cancelada")
+            val isCancelNotice = sync.lastError.startsWith(stringResource(R.string.sync_cancelled_prefix))
             Text(
                 text = sync.lastError,
                 color = if (isCancelNotice) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
@@ -946,60 +1214,125 @@ fun LibraryScreen(
             )
         }
 
-        TabRow(
-            selectedTabIndex = if (library.selectedTab == LibraryTab.Movies) 0 else 1
-        ) {
-            Tab(
-                selected = library.selectedTab == LibraryTab.Movies,
-                onClick = { onTabSelected(LibraryTab.Movies) },
-                text = {
-                    Text(
-                        if (novedadesMoviesCount > 0) {
-                            "Películas ($movieNovedadesLabel)"
-                        } else {
-                            "Películas"
+        if (!isAdvancedMode) {
+            TabRow(
+                selectedTabIndex = when (library.selectedTab) {
+                    LibraryTab.Movies -> 0
+                    LibraryTab.Series -> 1
+                    LibraryTab.Others -> 2
+                }
+            ) {
+                Tab(
+                    selected = library.selectedTab == LibraryTab.Movies,
+                    onClick = { onTabSelected(LibraryTab.Movies) },
+                    text = {
+                        Text(
+                            if (novedadesMoviesCount > 0) {
+                                stringResource(R.string.movies_tab_count, movieNovedadesLabel)
+                            } else {
+                                stringResource(R.string.movies)
+                            }
+                        )
+                    }
+                )
+                Tab(
+                    selected = library.selectedTab == LibraryTab.Series,
+                    onClick = { onTabSelected(LibraryTab.Series) },
+                    text = {
+                        Text(
+                            if (novedadesSeriesCount > 0) {
+                                stringResource(R.string.series_tab_count, seriesNovedadesLabel)
+                            } else {
+                                stringResource(R.string.series)
+                            }
+                        )
+                    }
+                )
+                Tab(
+                    selected = library.selectedTab == LibraryTab.Others,
+                    onClick = { onTabSelected(LibraryTab.Others) },
+                    text = {
+                        Text(
+                            if (novedadesOthersCount > 0) {
+                                stringResource(R.string.others_tab_count, othersNovedadesLabel)
+                            } else {
+                                stringResource(R.string.others)
+                            }
+                        )
+                    }
+                )
+            }
+        } else if (isAdvancedLibraryView) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "< ${stringResource(R.string.all_libraries)}",
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.clickable { selectedAdvancedLibrary.value = null }
+                )
+                Text(
+                    text = selectedLibraryName.orEmpty(),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+
+            val hasMovies = selectedLibraryMoviesCount > 0
+            val hasSeries = selectedLibrarySeriesCount > 0
+            val hasOthers = selectedLibraryOthersCount > 0
+            if (listOf(hasMovies, hasSeries, hasOthers).count { it } > 1) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = library.selectedTab == LibraryTab.Movies,
+                        onClick = { onTabSelected(LibraryTab.Movies) },
+                        enabled = hasMovies,
+                        label = {
+                            Text("${stringResource(R.string.movies)} ($selectedLibraryMoviesCount)")
+                        }
+                    )
+                    FilterChip(
+                        selected = library.selectedTab == LibraryTab.Series,
+                        onClick = { onTabSelected(LibraryTab.Series) },
+                        enabled = hasSeries,
+                        label = {
+                            Text("${stringResource(R.string.series)} ($selectedLibrarySeriesCount)")
+                        }
+                    )
+                    FilterChip(
+                        selected = library.selectedTab == LibraryTab.Others,
+                        onClick = { onTabSelected(LibraryTab.Others) },
+                        enabled = hasOthers,
+                        label = {
+                            Text("${stringResource(R.string.others)} ($selectedLibraryOthersCount)")
                         }
                     )
                 }
-            )
-            Tab(
-                selected = library.selectedTab == LibraryTab.Series,
-                onClick = { onTabSelected(LibraryTab.Series) },
-                text = {
-                    Text(
-                        if (novedadesSeriesCount > 0) {
-                            "Series ($seriesNovedadesLabel)"
-                        } else {
-                            "Series"
-                        }
-                    )
-                }
-            )
+            }
         }
 
-        val currentCount =
-            if (library.selectedTab == LibraryTab.Movies) sortedMovies.size else sortedSeries.size
-        val totalCount =
-            if (library.selectedTab == LibraryTab.Movies) totalMovies else totalSeries
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = if (library.selectedTab == LibraryTab.Movies) {
-                    "Películas: mostrando $currentCount de $totalCount"
-                } else {
-                    "Series: mostrando $currentCount de $totalCount"
-                },
-                style = MaterialTheme.typography.bodySmall
-            )
+        val currentCount = when (library.selectedTab) {
+            LibraryTab.Movies -> sortedMovies.size
+            LibraryTab.Series -> sortedSeries.size
+            LibraryTab.Others -> sortedOthers.size
+        }
+        val totalCount = when (library.selectedTab) {
+            LibraryTab.Movies -> totalMovies
+            LibraryTab.Series -> totalSeries
+            LibraryTab.Others -> totalOthers
         }
 
-        if (currentNovedadesCount > 0) {
+        if (!isAdvancedOverview) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1008,99 +1341,152 @@ fun LibraryScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Novedades desde última visita: $currentNovedadesLabel",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Text(
-                    text = "Marcar vistas",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.clickable { onMarkNovedadesAsSeen() }
+                    text = when (library.selectedTab) {
+                        LibraryTab.Movies -> stringResource(R.string.movies_showing, currentCount, totalCount)
+                        LibraryTab.Series -> stringResource(R.string.series_showing, currentCount, totalCount)
+                        LibraryTab.Others -> stringResource(R.string.others_showing, currentCount, totalCount)
+                    },
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
         }
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            TextField(
-                value = library.searchQuery,
-                onValueChange = onSearchChanged,
-                label = { Text("Buscar") },
-                modifier = Modifier.weight(1f)
-            )
-            Text(
-                text = "Filtros activos: $activeFiltersCount",
-                style = MaterialTheme.typography.bodySmall,
-                color = if (activeFiltersCount > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.combinedClickable(
-                    enabled = activeFiltersCount > 0,
-                    onClick = { onClearAllFilters() },
-                    onLongClick = { onClearAllFiltersAcrossTabs() }
+        if (!isAdvancedOverview && currentNovedadesCount > 0) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = stringResource(R.string.new_since_last_visit, currentNovedadesLabel),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
                 )
-            )
+                Text(
+                    text = stringResource(R.string.mark_seen),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clickable { onMarkNovedadesAsSeen(currentMaxCreatedEpochMillis) }
+                )
+            }
         }
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "Orden:",
-                style = MaterialTheme.typography.bodySmall
-            )
-            FilterChip(
-                selected = activeSortMode == LibrarySortMode.Alphabetical,
-                onClick = { onSortModeSelected(LibrarySortMode.Alphabetical) },
-                modifier = Modifier.height(32.dp),
-                label = {
-                    Text(
-                        text = "A-Z",
-                        style = MaterialTheme.typography.labelSmall
+        if (!isAdvancedOverview && library.selectedTab != LibraryTab.Others) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextField(
+                    value = library.searchQuery,
+                    onValueChange = onSearchChanged,
+                    label = { Text(stringResource(R.string.search)) },
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    text = stringResource(R.string.active_filters, activeFiltersCount),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (activeFiltersCount > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.combinedClickable(
+                        enabled = activeFiltersCount > 0,
+                        onClick = { onClearAllFilters() },
+                        onLongClick = { onClearAllFiltersAcrossTabs() }
+                    )
+                )
+            }
+        }
+
+        if (!isAdvancedOverview) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Orden:",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                FilterChip(
+                    selected = activeSortMode == LibrarySortMode.Alphabetical,
+                    onClick = { onSortModeSelected(LibrarySortMode.Alphabetical) },
+                    modifier = Modifier.height(32.dp),
+                    label = {
+                        Text(
+                            text = stringResource(R.string.sort_az),
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                )
+                FilterChip(
+                    selected = activeSortMode == LibrarySortMode.RecentlyAdded,
+                    onClick = { onSortModeSelected(LibrarySortMode.RecentlyAdded) },
+                    modifier = Modifier.height(32.dp),
+                    label = {
+                        Text(
+                            text = stringResource(R.string.recently_added),
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                )
+                FilterChip(
+                    selected = activeFavoriteOnly,
+                    onClick = onFavoriteFilterToggled,
+                    modifier = Modifier.height(32.dp),
+                    label = {
+                        Text(
+                            text = stringResource(R.string.favorites),
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                )
+            }
+        }
+
+        if (!isAdvancedOverview && library.selectedTab == LibraryTab.Others && otherLibraryOptions.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "${stringResource(R.string.libraries_label)}:",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                FilterChip(
+                    selected = selectedOtherLibraryFilter.value == null,
+                    onClick = { selectedOtherLibraryFilter.value = null },
+                    label = { Text(stringResource(R.string.all_libraries)) }
+                )
+                otherLibraryOptions.forEach { libraryName ->
+                    FilterChip(
+                        selected = selectedOtherLibraryFilter.value == libraryName,
+                        onClick = { selectedOtherLibraryFilter.value = libraryName },
+                        label = { Text(libraryName) }
                     )
                 }
-            )
-            FilterChip(
-                selected = activeSortMode == LibrarySortMode.RecentlyAdded,
-                onClick = { onSortModeSelected(LibrarySortMode.RecentlyAdded) },
-                modifier = Modifier.height(32.dp),
-                label = {
-                    Text(
-                        text = "Últimos añadidos",
-                        style = MaterialTheme.typography.labelSmall
-                    )
-                }
-            )
-            FilterChip(
-                selected = activeFavoriteOnly,
-                onClick = onFavoriteFilterToggled,
-                modifier = Modifier.height(32.dp),
-                label = {
-                    Text(
-                        text = "Favoritos",
-                        style = MaterialTheme.typography.labelSmall
-                    )
-                }
-            )
+            }
         }
 
         if (
+            !isAdvancedOverview &&
+            library.selectedTab != LibraryTab.Others &&
             activeSortMode == LibrarySortMode.RecentlyAdded &&
             currentItemsTotal > 0 &&
             currentItemsMissingCreatedDate > 0
         ) {
             val hintText = if (currentItemsMissingCreatedDate == currentItemsTotal) {
-                "Sin fecha de alta disponible todavía. Sincroniza para completar metadatos."
+                stringResource(R.string.no_created_date_all)
             } else {
-                "$currentItemsMissingCreatedDate elementos sin fecha de alta se muestran al final."
+                stringResource(R.string.no_created_date_partial, currentItemsMissingCreatedDate)
             }
             Row(
                 modifier = Modifier.padding(horizontal = 16.dp),
@@ -1121,14 +1507,47 @@ fun LibraryScreen(
             }
         }
 
-        Text(
-            text = "Mantén pulsado en 'Filtros activos' para limpiar filtros de películas y series.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 16.dp)
-        )
+        if (!isAdvancedOverview && library.selectedTab != LibraryTab.Others) {
+            Text(
+                text = stringResource(R.string.hold_filters_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
+        }
 
-        if (genreFilters.isNotEmpty() || technicalFilters.isNotEmpty()) {
+        if (isAdvancedOverview && showLibraryCoverHint) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = stringResource(R.string.library_cover_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                TextButton(onClick = onDismissLibraryCoverHint) {
+                    Text(stringResource(R.string.got_it))
+                }
+            }
+        }
+
+        if (!isAdvancedOverview && (genreFilters.isNotEmpty() || technicalFilters.isNotEmpty())) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1139,16 +1558,16 @@ fun LibraryScreen(
                 Column {
                     if (genreFilters.isNotEmpty()) {
                         Text(
-                            text = "Géneros: ${genreFilters.joinToString(", ")}",
+                            text = stringResource(R.string.label_genres, genreFilters.joinToString(", ")),
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
                     if (technicalFilters.isNotEmpty()) {
                         technicalFilters.forEach { (type, values) ->
                             val techLabel = when (type) {
-                                TechnicalFilterType.Quality -> "Calidad"
-                                TechnicalFilterType.Format -> "Formato"
-                                TechnicalFilterType.Resolution -> "Resolución"
+                                TechnicalFilterType.Quality -> stringResource(R.string.tech_quality)
+                                TechnicalFilterType.Format -> stringResource(R.string.tech_format)
+                                TechnicalFilterType.Resolution -> stringResource(R.string.tech_resolution)
                             }
                             Text(
                                 text = "$techLabel: ${values.joinToString(", ")}",
@@ -1160,7 +1579,7 @@ fun LibraryScreen(
                 Column(horizontalAlignment = Alignment.End) {
                     if (genreFilters.isNotEmpty()) {
                         Text(
-                            text = "Limpiar género",
+                            text = stringResource(R.string.clear_genre),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.clickable { onClearGenreFilter() }
@@ -1168,7 +1587,7 @@ fun LibraryScreen(
                     }
                     if (technicalFilters.isNotEmpty()) {
                         Text(
-                            text = "Limpiar detalles",
+                            text = stringResource(R.string.clear_details),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.clickable { onClearTechnicalFilter() }
@@ -1183,44 +1602,76 @@ fun LibraryScreen(
                 .fillMaxWidth()
                 .weight(1f)
         ) {
-            if (library.selectedTab == LibraryTab.Movies) {
-                if (uiState.config.listDisplayMode == ListDisplayMode.Paged50) {
-                    MoviesPagedGrid(
-                        movies = sortedMovies,
-                        onMovieClick = { selectedMovieId.value = it.id },
-                        onFavoriteToggle = onMovieFavoriteToggled,
-                        onGenreClick = onGenreSelected,
-                        onTechnicalFilterClick = onTechnicalFilterSelected,
-                        refreshingMovieId = movieRefreshingId.value
-                    )
-                } else {
-                    MoviesGrid(
-                        movies = sortedMovies,
-                        onMovieClick = { selectedMovieId.value = it.id },
-                        onFavoriteToggle = onMovieFavoriteToggled,
-                        onGenreClick = onGenreSelected,
-                        onTechnicalFilterClick = onTechnicalFilterSelected,
-                        refreshingMovieId = movieRefreshingId.value
-                    )
-                }
+            if (isAdvancedOverview) {
+                AdvancedLibrariesGrid(
+                    libraries = allLibraries,
+                    posterUrls = effectiveLibraryPosterUrls,
+                    movieCounts = movieLibrariesCount,
+                    seriesCounts = seriesLibrariesCount,
+                    otherCounts = otherLibrariesCount,
+                    onOpenLibrary = { libraryName ->
+                        selectedAdvancedLibrary.value = libraryName
+                        val moviesCount = movieLibrariesCount[libraryName] ?: 0
+                        val seriesCount = seriesLibrariesCount[libraryName] ?: 0
+                        val othersCount = otherLibrariesCount[libraryName] ?: 0
+                        when {
+                            moviesCount > 0 -> onTabSelected(LibraryTab.Movies)
+                            seriesCount > 0 -> onTabSelected(LibraryTab.Series)
+                            othersCount > 0 -> onTabSelected(LibraryTab.Others)
+                        }
+                    },
+                    onEditLibraryCover = { libraryName ->
+                        onDismissLibraryCoverHint()
+                        selectedLibraryForCoverDialog.value = libraryName
+                    }
+                )
             } else {
-                val onSeriesSelected: (SeriesEntity) -> Unit = { s ->
-                    selectedSeries.value = s
-                }
+                if (library.selectedTab == LibraryTab.Movies) {
+                    if (uiState.config.listDisplayMode == ListDisplayMode.Paged50) {
+                        MoviesPagedGrid(
+                            movies = visibleMovies,
+                            onMovieClick = { selectedMovieId.value = it.id },
+                            onFavoriteToggle = onMovieFavoriteToggled,
+                            onGenreClick = onGenreSelected,
+                            onTechnicalFilterClick = onTechnicalFilterSelected,
+                            refreshingMovieId = movieRefreshingId.value
+                        )
+                    } else {
+                        MoviesGrid(
+                            movies = visibleMovies,
+                            onMovieClick = { selectedMovieId.value = it.id },
+                            onFavoriteToggle = onMovieFavoriteToggled,
+                            onGenreClick = onGenreSelected,
+                            onTechnicalFilterClick = onTechnicalFilterSelected,
+                            refreshingMovieId = movieRefreshingId.value
+                        )
+                    }
+                } else if (library.selectedTab == LibraryTab.Series) {
+                    val onSeriesSelected: (SeriesEntity) -> Unit = { s ->
+                        selectedSeries.value = s
+                    }
 
-                if (uiState.config.listDisplayMode == ListDisplayMode.Paged50) {
-                    SeriesPagedList(
-                        series = sortedSeries,
-                        onSeriesClick = onSeriesSelected,
-                        onFavoriteToggle = onSeriesFavoriteToggled,
-                        onGenreClick = onGenreSelected
-                    )
+                    if (uiState.config.listDisplayMode == ListDisplayMode.Paged50) {
+                        SeriesPagedList(
+                            series = visibleSeries,
+                            onSeriesClick = onSeriesSelected,
+                            onFavoriteToggle = onSeriesFavoriteToggled,
+                            onGenreClick = onGenreSelected
+                        )
+                    } else {
+                        SeriesList(
+                            series = visibleSeries,
+                            onSeriesClick = onSeriesSelected,
+                            onFavoriteToggle = onSeriesFavoriteToggled,
+                            onGenreClick = onGenreSelected
+                        )
+                    }
                 } else {
-                    SeriesList(
-                        series = sortedSeries,
-                        onSeriesClick = onSeriesSelected,
-                        onFavoriteToggle = onSeriesFavoriteToggled,
-                        onGenreClick = onGenreSelected
+                    OtherMediaTypeList(
+                        items = filteredVisibleOthers,
+                        onOpenType = { mediaType ->
+                            selectedOtherGroupType.value = mediaType
+                        }
                     )
                 }
             }
@@ -1256,8 +1707,8 @@ fun LibraryScreen(
                 )
             }
             Text(
-                text = sync.lastSyncText?.let { "Última actualización: $it" }
-                    ?: "Última actualización: pendiente",
+                text = sync.lastSyncText?.let { stringResource(R.string.last_update, it) }
+                    ?: stringResource(R.string.last_update_pending),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.clickable { showSyncHistoryDialog.value = true }
@@ -1269,6 +1720,7 @@ fun LibraryScreen(
             if (selectedMovie != null) {
                 MovieDetailDialog(
                     movie = selectedMovie,
+                    showFilePath = uiState.config.showFilePath,
                     onFavoriteToggle = { isFavorite ->
                         onMovieFavoriteToggled(selectedMovie.id, isFavorite)
                     },
@@ -1298,6 +1750,7 @@ fun LibraryScreen(
             val seasons = detailsFlow.collectAsState(initial = emptyList()).value
             SeriesDetailDialog(
                 series = selectedSeriesLatest,
+                showFilePath = uiState.config.showFilePath,
                 onFavoriteToggle = { isFavorite ->
                     onSeriesFavoriteToggled(selectedSeriesLatest.id, isFavorite)
                 },
@@ -1316,6 +1769,15 @@ fun LibraryScreen(
             )
         }
 
+        selectedOtherGroupType.value?.let { mediaType ->
+            val groupItems = filteredVisibleOthers.filter { it.mediaType.equals(mediaType, ignoreCase = true) }
+            OtherMediaItemsDialog(
+                mediaType = mediaType,
+                items = groupItems,
+                onDismiss = { selectedOtherGroupType.value = null }
+            )
+        }
+
         if (showSyncDialog.value) {
             AlertDialog(
                 onDismissRequest = { showSyncDialog.value = false },
@@ -1327,10 +1789,10 @@ fun LibraryScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Text(
-                            "Aviso: colecciones grandes pueden tardar varios minutos en sincronizar.",
+                            stringResource(R.string.sync_warning_large_collections),
                             style = MaterialTheme.typography.bodySmall
                         )
-                        Text("¿Qué deseas sincronizar?")
+                        Text(stringResource(R.string.what_to_sync))
                         Button(
                             onClick = {
                                 showSyncDialog.value = false
@@ -1338,7 +1800,7 @@ fun LibraryScreen(
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("Todo")
+                            Text(stringResource(R.string.all))
                         }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -1351,7 +1813,7 @@ fun LibraryScreen(
                                 },
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Text("Películas")
+                                Text(stringResource(R.string.movies))
                             }
                             Button(
                                 onClick = {
@@ -1360,11 +1822,20 @@ fun LibraryScreen(
                                 },
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Text("Series")
+                                Text(stringResource(R.string.series))
                             }
                         }
+                        OutlinedButton(
+                            onClick = {
+                                showSyncDialog.value = false
+                                onSyncOthers()
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(stringResource(R.string.others))
+                        }
 
-                        Text("Últimos añadidos")
+                        Text(stringResource(R.string.recently_added))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1376,7 +1847,7 @@ fun LibraryScreen(
                                 },
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Text("Películas")
+                                Text(stringResource(R.string.movies))
                             }
                             OutlinedButton(
                                 onClick = {
@@ -1385,11 +1856,20 @@ fun LibraryScreen(
                                 },
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Text("Series")
+                                Text(stringResource(R.string.series))
                             }
                         }
+                        OutlinedButton(
+                            onClick = {
+                                showSyncDialog.value = false
+                                onSyncRecentOthers()
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(stringResource(R.string.others))
+                        }
 
-                        Text("Rápida")
+                        Text(stringResource(R.string.fast))
                         OutlinedButton(
                             onClick = {
                                 showSyncDialog.value = false
@@ -1397,7 +1877,7 @@ fun LibraryScreen(
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("Todo")
+                            Text(stringResource(R.string.all))
                         }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -1410,7 +1890,7 @@ fun LibraryScreen(
                                 },
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Text("Películas")
+                                Text(stringResource(R.string.movies))
                             }
                             OutlinedButton(
                                 onClick = {
@@ -1419,11 +1899,20 @@ fun LibraryScreen(
                                 },
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Text("Series")
+                                Text(stringResource(R.string.series))
                             }
                         }
+                        OutlinedButton(
+                            onClick = {
+                                showSyncDialog.value = false
+                                onSyncFastOthers()
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(stringResource(R.string.others))
+                        }
 
-                        Text("Detalles (sin catálogo)")
+                        Text(stringResource(R.string.details_no_catalog))
                         OutlinedButton(
                             onClick = {
                                 showSyncDialog.value = false
@@ -1431,7 +1920,7 @@ fun LibraryScreen(
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("Todo")
+                            Text(stringResource(R.string.all))
                         }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -1444,7 +1933,7 @@ fun LibraryScreen(
                                 },
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Text("Películas")
+                                Text(stringResource(R.string.movies))
                             }
                             OutlinedButton(
                                 onClick = {
@@ -1453,7 +1942,7 @@ fun LibraryScreen(
                                 },
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Text("Series")
+                                Text(stringResource(R.string.series))
                             }
                         }
                     }
@@ -1466,16 +1955,31 @@ fun LibraryScreen(
                 onDismissRequest = { showSyncHistoryDialog.value = false },
                 confirmButton = {
                     Button(onClick = { showSyncHistoryDialog.value = false }) {
-                        Text("Cerrar")
+                        Text(stringResource(R.string.close))
                     }
                 },
-                title = { Text("Historial de sincronización") },
+                dismissButton = {
+                    OutlinedButton(
+                        onClick = {
+                            onClearSyncHistory()
+                            showSyncHistoryDialog.value = false
+                        }
+                    ) {
+                        Text(stringResource(R.string.clear_history), color = MaterialTheme.colorScheme.error)
+                    }
+                },
+                title = { Text(stringResource(R.string.sync_history)) },
                 text = {
                     if (sync.syncHistory.isEmpty()) {
-                        Text("Sin historial todavía")
+                        Text(stringResource(R.string.empty_history))
                     } else {
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            sync.syncHistory.take(20).forEach { entry ->
+                        Column(
+                            modifier = Modifier
+                                .heightIn(max = 400.dp)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            sync.syncHistory.forEach { entry ->
                                 Text(
                                     text = entry,
                                     style = MaterialTheme.typography.bodySmall
@@ -1487,6 +1991,357 @@ fun LibraryScreen(
             )
         }
     }
+
+    selectedLibraryForCoverDialog.value?.let { libraryName ->
+        LibraryCoverPickerDialog(
+            libraryName = libraryName,
+            currentImageUrl = effectiveLibraryPosterUrls[libraryName],
+            candidatePosterUrls = libraryPosterCandidates[libraryName].orEmpty(),
+            onDismiss = { selectedLibraryForCoverDialog.value = null },
+            onRestoreAutomatic = {
+                onLibraryCoverReset(libraryName)
+                selectedLibraryForCoverDialog.value = null
+            },
+            onSelectPoster = { imageUrl ->
+                onLibraryCoverSelected(libraryName, imageUrl)
+                selectedLibraryForCoverDialog.value = null
+            }
+        )
+    }
+}
+
+@Composable
+private fun AdvancedLibrariesGrid(
+    libraries: List<String>,
+    posterUrls: Map<String, String?>,
+    movieCounts: Map<String, Int>,
+    seriesCounts: Map<String, Int>,
+    otherCounts: Map<String, Int>,
+    onOpenLibrary: (String) -> Unit,
+    onEditLibraryCover: (String) -> Unit
+) {
+    if (libraries.isEmpty()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = stringResource(R.string.empty_state),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        return
+    }
+
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(2),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        items(libraries) { libraryName ->
+            val posterUrl = posterUrls[libraryName]
+            val movies = movieCounts[libraryName] ?: 0
+            val series = seriesCounts[libraryName] ?: 0
+            val others = otherCounts[libraryName] ?: 0
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .combinedClickable(
+                        onClick = { onOpenLibrary(libraryName) },
+                        onLongClick = { onEditLibraryCover(libraryName) }
+                    ),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    PosterImage(
+                        imageUrl = posterUrl,
+                        contentDescription = libraryName,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(112.dp)
+                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 14.dp, end = 14.dp, bottom = 14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = libraryName,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "${stringResource(R.string.movies)}: $movies",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "${stringResource(R.string.series)}: $series",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "${stringResource(R.string.others)}: $others",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OtherMediaTypeList(
+    items: List<OtherMediaEntity>,
+    onOpenType: (String) -> Unit
+) {
+    if (items.isEmpty()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = stringResource(R.string.no_results),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        return
+    }
+
+    val grouped = items.groupBy { it.mediaType.lowercase() }
+    val videos = grouped["video"].orEmpty()
+    val photos = grouped["photo"].orEmpty()
+    val cards = listOf(
+        stringResource(R.string.videos) to videos,
+        stringResource(R.string.images) to photos
+    ).filter { it.second.isNotEmpty() }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        items(cards) { (label, groupItems) ->
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        val mediaType = groupItems.firstOrNull()?.mediaType ?: return@clickable
+                        onOpenType(mediaType)
+                    },
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = stringResource(R.string.items_count, groupItems.size),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OtherMediaItemsDialog(
+    mediaType: String,
+    items: List<OtherMediaEntity>,
+    onDismiss: () -> Unit
+) {
+    val searchQuery = remember(mediaType) { mutableStateOf("") }
+    val recentFirst = remember(mediaType) { mutableStateOf(false) }
+
+    val typeLabel = if (mediaType.equals("photo", ignoreCase = true)) {
+        stringResource(R.string.images)
+    } else {
+        stringResource(R.string.videos)
+    }
+
+    val filteredItems = remember(items, searchQuery.value) {
+        val query = searchQuery.value.trim()
+        if (query.isBlank()) {
+            items
+        } else {
+            items.filter { it.title.contains(query, ignoreCase = true) }
+        }
+    }
+
+    val displayedItems = remember(filteredItems, recentFirst.value) {
+        if (recentFirst.value) {
+            filteredItems.sortedWith(
+                compareByDescending<OtherMediaEntity> { it.createdUtcMillis ?: Long.MIN_VALUE }
+                    .thenBy { it.title.lowercase() }
+            )
+        } else {
+            filteredItems.sortedBy { it.title.lowercase() }
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.other_items_dialog_title, typeLabel)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextField(
+                    value = searchQuery.value,
+                    onValueChange = { searchQuery.value = it },
+                    label = { Text(stringResource(R.string.search)) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = !recentFirst.value,
+                        onClick = { recentFirst.value = false },
+                        label = { Text(stringResource(R.string.sort_az)) }
+                    )
+                    FilterChip(
+                        selected = recentFirst.value,
+                        onClick = { recentFirst.value = true },
+                        label = { Text(stringResource(R.string.recently_added)) }
+                    )
+                }
+
+                if (displayedItems.isEmpty()) {
+                    Text(
+                        text = stringResource(R.string.no_results),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 320.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(displayedItems) { item ->
+                            Text(
+                                text = item.title,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.close))
+            }
+        }
+    )
+}
+
+@Composable
+private fun LibraryCoverPickerDialog(
+    libraryName: String,
+    currentImageUrl: String?,
+    candidatePosterUrls: List<String>,
+    onDismiss: () -> Unit,
+    onRestoreAutomatic: () -> Unit,
+    onSelectPoster: (String) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(stringResource(R.string.library_cover_dialog_title, libraryName))
+        },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                if (!currentImageUrl.isNullOrBlank()) {
+                    PosterImage(
+                        imageUrl = currentImageUrl,
+                        contentDescription = libraryName,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(140.dp)
+                    )
+                }
+                if (candidatePosterUrls.isEmpty()) {
+                    Text(
+                        text = stringResource(R.string.library_cover_no_candidates),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    Text(
+                        text = stringResource(R.string.library_cover_choose_manual),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(3),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 320.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(candidatePosterUrls) { posterUrl ->
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onSelectPoster(posterUrl) },
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                PosterImage(
+                                    imageUrl = posterUrl,
+                                    contentDescription = libraryName,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(120.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onRestoreAutomatic) {
+                Text(stringResource(R.string.library_cover_restore_automatic))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.cancel))
+            }
+        }
+    )
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -1520,7 +2375,7 @@ fun MoviesPagedGrid(
             val pageItems = pages.getOrNull(pageIndex).orEmpty()
             if (pageItems.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("Sin resultados")
+                    Text(stringResource(R.string.no_results))
                 }
             } else {
                 MoviesGrid(
@@ -1613,7 +2468,11 @@ fun MoviesGrid(
                         ) {
                             Icon(
                                 imageVector = if (movie.isFavorite) Icons.Filled.Star else Icons.Outlined.StarBorder,
-                                contentDescription = if (movie.isFavorite) "Quitar de favoritos" else "Añadir a favoritos",
+                                contentDescription = if (movie.isFavorite) {
+                                    stringResource(R.string.remove_from_favorites)
+                                } else {
+                                    stringResource(R.string.add_to_favorites)
+                                },
                                 tint = if (movie.isFavorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                             )
                         }
@@ -1644,7 +2503,7 @@ fun MoviesGrid(
                                 color = MaterialTheme.colorScheme.onPrimaryContainer
                             )
                             Text(
-                                text = "Actualizando...",
+                                text = stringResource(R.string.updating),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer
                             )
@@ -1652,7 +2511,7 @@ fun MoviesGrid(
                     }
                     if (movie.genres.isEmpty()) {
                         Text(
-                            text = "Géneros: -",
+                            text = stringResource(R.string.genres_none),
                             style = responsiveBodySmall,
                             modifier = Modifier
                                 .padding(horizontal = 8.dp)
@@ -1660,7 +2519,7 @@ fun MoviesGrid(
                         )
                     } else {
                         Text(
-                            text = "Géneros:",
+                            text = stringResource(R.string.genres_title),
                             style = responsiveBodySmall,
                             fontWeight = FontWeight.SemiBold,
                             modifier = Modifier.padding(horizontal = 8.dp)
@@ -1682,7 +2541,7 @@ fun MoviesGrid(
                         !movie.resolution.isNullOrBlank()
                     if (hasTechnicalInfo) {
                         Text(
-                            text = "Detalles técnicos:",
+                            text = stringResource(R.string.technical_details),
                             style = responsiveBodySmall,
                             fontWeight = FontWeight.SemiBold,
                             modifier = Modifier
@@ -1698,7 +2557,7 @@ fun MoviesGrid(
                         ) {
                             movie.quality?.takeIf { it.isNotBlank() }?.let { quality ->
                                 Text(
-                                    text = "Calidad: $quality",
+                                    text = stringResource(R.string.label_quality, quality),
                                     style = responsiveBodySmall,
                                     color = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.clickable {
@@ -1708,7 +2567,7 @@ fun MoviesGrid(
                             }
                             movie.format?.takeIf { it.isNotBlank() }?.let { format ->
                                 Text(
-                                    text = "Formato: $format",
+                                    text = stringResource(R.string.label_format, format),
                                     style = responsiveBodySmall,
                                     color = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.clickable {
@@ -1718,7 +2577,7 @@ fun MoviesGrid(
                             }
                             movie.resolution?.takeIf { it.isNotBlank() }?.let { resolution ->
                                 Text(
-                                    text = "Resolución: $resolution",
+                                    text = stringResource(R.string.label_resolution, resolution),
                                     style = responsiveBodySmall,
                                     color = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.clickable {
@@ -1800,7 +2659,11 @@ fun SeriesList(
                             ) {
                                 Icon(
                                     imageVector = if (item.isFavorite) Icons.Filled.Star else Icons.Outlined.StarBorder,
-                                    contentDescription = if (item.isFavorite) "Quitar de favoritos" else "Añadir a favoritos",
+                                    contentDescription = if (item.isFavorite) {
+                                        stringResource(R.string.remove_from_favorites)
+                                    } else {
+                                        stringResource(R.string.add_to_favorites)
+                                    },
                                     tint = if (item.isFavorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                 )
                             }
@@ -1812,7 +2675,7 @@ fun SeriesList(
                         )
                         if (item.genres.isNotEmpty()) {
                             Text(
-                                text = "Géneros: ${item.genres.take(3).joinToString()}",
+                                text = stringResource(R.string.label_genres, item.genres.take(3).joinToString()),
                                 style = responsiveBodySmall,
                                 color = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.clickable {
@@ -1821,15 +2684,15 @@ fun SeriesList(
                             )
                         }
                         Text(
-                            text = "Temporadas: ${item.totalSeasons}",
+                            text = stringResource(R.string.label_seasons, item.totalSeasons),
                             style = MaterialTheme.typography.bodyMedium
                         )
                         Text(
-                            text = "Episodios: ${item.totalEpisodes}",
+                            text = stringResource(R.string.label_episodes, item.totalEpisodes),
                             style = MaterialTheme.typography.bodyMedium
                         )
                         Text(
-                            text = "Ver detalle por temporada y actualizar",
+                            text = stringResource(R.string.view_season_details),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -1856,7 +2719,11 @@ fun SeriesList(
                             ) {
                                 Icon(
                                     imageVector = if (item.isFavorite) Icons.Filled.Star else Icons.Outlined.StarBorder,
-                                    contentDescription = if (item.isFavorite) "Quitar de favoritos" else "Añadir a favoritos",
+                                    contentDescription = if (item.isFavorite) {
+                                        stringResource(R.string.remove_from_favorites)
+                                    } else {
+                                        stringResource(R.string.add_to_favorites)
+                                    },
                                     tint = if (item.isFavorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                 )
                             }
@@ -1874,7 +2741,7 @@ fun SeriesList(
                             )
                             if (item.genres.isNotEmpty()) {
                                 Text(
-                                    text = "Géneros:",
+                                    text = stringResource(R.string.genres_title),
                                     style = responsiveBodySmall,
                                     fontWeight = FontWeight.SemiBold
                                 )
@@ -1938,7 +2805,7 @@ fun SeriesPagedList(
             val pageItems = pages.getOrNull(pageIndex).orEmpty()
             if (pageItems.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("Sin resultados")
+                    Text(stringResource(R.string.no_results))
                 }
             } else {
                 SeriesList(
@@ -1982,6 +2849,7 @@ fun PosterImage(
 @Composable
 fun MovieDetailDialog(
     movie: MovieEntity,
+    showFilePath: Boolean,
     onFavoriteToggle: (Boolean) -> Unit,
     isRefreshing: Boolean,
     onRefresh: () -> Unit,
@@ -2007,7 +2875,11 @@ fun MovieDetailDialog(
                 IconButton(onClick = { onFavoriteToggle(!movie.isFavorite) }) {
                     Icon(
                         imageVector = if (movie.isFavorite) Icons.Filled.Star else Icons.Outlined.StarBorder,
-                        contentDescription = if (movie.isFavorite) "Quitar de favoritos" else "Añadir a favoritos",
+                        contentDescription = if (movie.isFavorite) {
+                            stringResource(R.string.remove_from_favorites)
+                        } else {
+                            stringResource(R.string.add_to_favorites)
+                        },
                         tint = if (movie.isFavorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                     )
                 }
@@ -2027,14 +2899,20 @@ fun MovieDetailDialog(
                             modifier = Modifier.height(16.dp),
                             strokeWidth = 2.dp
                         )
-                        Text("Actualizando información de la película...")
+                        Text(stringResource(R.string.movie_updating_info))
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                 }
-                Text("Formato: ${movie.format ?: "-"}")
-                Text("Calidad: ${movie.quality ?: "-"}")
-                Text("Resolución: ${movie.resolution ?: "-"}")
-                Text("Bitrate: ${movie.bitrateMbps?.let { "%.2f Mbps".format(it) } ?: "-"}")
+                Text(stringResource(R.string.label_format, movie.format ?: "-"))
+                Text(stringResource(R.string.label_quality, movie.quality ?: "-"))
+                Text(stringResource(R.string.label_resolution, movie.resolution ?: "-"))
+                movie.productionYear?.let { Text(stringResource(R.string.label_year, it)) }
+                Text(
+                    stringResource(
+                        R.string.label_bitrate,
+                        movie.bitrateMbps?.let { "%.2f Mbps".format(it) } ?: "-"
+                    )
+                )
                 val durationText = movie.durationMinutes?.let { totalMinutes ->
                     val hours = totalMinutes / 60
                     val minutes = totalMinutes % 60
@@ -2044,23 +2922,52 @@ fun MovieDetailDialog(
                         "${minutes}min"
                     }
                 } ?: "-"
-                Text("Duración: $durationText")
-                Text("Tamaño: ${movie.sizeGb?.let { "%.2f GB".format(it) } ?: "-"}")
-                Text("Audios: ${if (movie.audioLanguages.isEmpty()) "-" else movie.audioLanguages.joinToString()}")
-                Text("Subtítulos: ${if (movie.subtitleLanguages.isEmpty()) "-" else movie.subtitleLanguages.joinToString()}")
+                Text(stringResource(R.string.label_duration, durationText))
+                Text(
+                    stringResource(
+                        R.string.label_size,
+                        movie.sizeGb?.let { "%.2f GB".format(it) } ?: "-"
+                    )
+                )
+                Text(
+                    stringResource(
+                        R.string.label_audio,
+                        if (movie.audioLanguages.isEmpty()) "-" else movie.audioLanguages.joinToString()
+                    )
+                )
+                Text(
+                    stringResource(
+                        R.string.label_subtitles,
+                        if (movie.subtitleLanguages.isEmpty()) "-" else movie.subtitleLanguages.joinToString()
+                    )
+                )
+                if (showFilePath && !movie.filePath.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = stringResource(R.string.label_path, movie.filePath),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 Spacer(modifier = Modifier.height(8.dp))
                 Button(
                     onClick = onRefresh,
                     enabled = !isRefreshing,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(if (isRefreshing) "Actualizando..." else "Actualizar esta película")
+                    Text(
+                        if (isRefreshing) {
+                            stringResource(R.string.updating)
+                        } else {
+                            stringResource(R.string.update_this_movie)
+                        }
+                    )
                 }
             }
         },
         confirmButton = {
             Button(onClick = onDismiss) {
-                Text("Cerrar")
+                Text(stringResource(R.string.close))
             }
         }
     )
@@ -2069,6 +2976,7 @@ fun MovieDetailDialog(
 @Composable
 fun SeriesDetailDialog(
     series: SeriesEntity,
+    showFilePath: Boolean,
     onFavoriteToggle: (Boolean) -> Unit,
     seasons: List<com.zynerio.bibliotecajelly.data.SeasonEntity>,
     isRefreshing: Boolean,
@@ -2099,7 +3007,11 @@ fun SeriesDetailDialog(
                 IconButton(onClick = { onFavoriteToggle(!series.isFavorite) }) {
                     Icon(
                         imageVector = if (series.isFavorite) Icons.Filled.Star else Icons.Outlined.StarBorder,
-                        contentDescription = if (series.isFavorite) "Quitar de favoritos" else "Añadir a favoritos",
+                        contentDescription = if (series.isFavorite) {
+                            stringResource(R.string.remove_from_favorites)
+                        } else {
+                            stringResource(R.string.add_to_favorites)
+                        },
                         tint = if (series.isFavorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                     )
                 }
@@ -2110,12 +3022,13 @@ fun SeriesDetailDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Text("Temporadas: ${series.totalSeasons}")
-                Text("Episodios: ${series.totalEpisodes}")
+                Text(stringResource(R.string.label_seasons, series.totalSeasons))
+                Text(stringResource(R.string.label_episodes, series.totalEpisodes))
+                series.productionYear?.let { Text(stringResource(R.string.label_year, it)) }
 
                 if (series.genres.isNotEmpty()) {
                     Text(
-                        text = "Géneros: ${series.genres.joinToString()}",
+                        text = stringResource(R.string.label_genres, series.genres.joinToString()),
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -2130,36 +3043,45 @@ fun SeriesDetailDialog(
                             modifier = Modifier.height(16.dp),
                             strokeWidth = 2.dp
                         )
-                        Text("Actualizando información de temporadas y episodios...")
+                        Text(stringResource(R.string.series_updating_info))
                     }
                 }
 
                 Text(
-                    text = "Detalle por temporada:",
+                    text = stringResource(R.string.season_detail_title),
                     style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold)
                 )
                 seasons.sortedBy { it.seasonNumber }.forEach { season ->
                     Text(
-                        text = "T${season.seasonNumber}: ${season.episodeCount} eps",
+                        text = stringResource(R.string.season_item_short, season.seasonNumber, season.episodeCount),
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.SemiBold
                     )
                     season.quality?.takeIf { it.isNotBlank() }?.let {
-                        Text("Calidad: $it", style = MaterialTheme.typography.bodySmall)
+                        Text(stringResource(R.string.label_quality, it), style = MaterialTheme.typography.bodySmall)
                     }
                     season.format?.takeIf { it.isNotBlank() }?.let {
-                        Text("Formato: $it", style = MaterialTheme.typography.bodySmall)
+                        Text(stringResource(R.string.label_format, it), style = MaterialTheme.typography.bodySmall)
                     }
                     season.resolution?.takeIf { it.isNotBlank() }?.let {
-                        Text("Resolución: $it", style = MaterialTheme.typography.bodySmall)
+                        Text(stringResource(R.string.label_resolution, it), style = MaterialTheme.typography.bodySmall)
                     }
                     Spacer(modifier = Modifier.height(4.dp))
                 }
 
                 if (seasons.isEmpty()) {
                     Text(
-                        text = "No hay detalle de temporadas todavía. Usa Actualizar.",
+                        text = stringResource(R.string.series_no_season_details),
                         style = MaterialTheme.typography.bodySmall
+                    )
+                }
+
+                if (showFilePath && !series.filePath.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = stringResource(R.string.label_path, series.filePath),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
 
@@ -2169,10 +3091,16 @@ fun SeriesDetailDialog(
                     enabled = !isRefreshing,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(if (isRefreshing) "Actualizando..." else "Actualizar esta serie")
+                    Text(
+                        if (isRefreshing) {
+                            stringResource(R.string.updating)
+                        } else {
+                            stringResource(R.string.update_this_series)
+                        }
+                    )
                 }
                 Text(
-                    text = "Puedes cerrar cuando termine la actualización.",
+                    text = stringResource(R.string.close_when_done),
                     style = MaterialTheme.typography.bodySmall
                 )
             }
@@ -2182,7 +3110,7 @@ fun SeriesDetailDialog(
                 onClick = onDismiss,
                 enabled = !isRefreshing
             ) {
-                Text("Cerrar")
+                Text(stringResource(R.string.close))
             }
         }
     )

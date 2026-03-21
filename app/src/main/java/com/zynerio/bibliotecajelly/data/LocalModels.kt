@@ -17,6 +17,8 @@ import androidx.room.TypeConverter
 import androidx.room.TypeConverters
 import androidx.room.Transaction
 import androidx.room.Upsert
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 @Entity(
@@ -47,7 +49,15 @@ data class MovieEntity(
     val subtitleLanguages: List<String>,
     val genres: List<String>,
     @ColumnInfo(name = "is_favorite")
-    val isFavorite: Boolean = false
+    val isFavorite: Boolean = false,
+    @ColumnInfo(name = "production_year")
+    val productionYear: Int? = null,
+    @ColumnInfo(name = "library_id")
+    val libraryId: String? = null,
+    @ColumnInfo(name = "library_name")
+    val libraryName: String? = null,
+    @ColumnInfo(name = "file_path")
+    val filePath: String? = null
 )
 
 @Entity(
@@ -68,7 +78,15 @@ data class SeriesEntity(
     val totalEpisodes: Int,
     val genres: List<String>,
     @ColumnInfo(name = "is_favorite")
-    val isFavorite: Boolean = false
+    val isFavorite: Boolean = false,
+    @ColumnInfo(name = "production_year")
+    val productionYear: Int? = null,
+    @ColumnInfo(name = "library_id")
+    val libraryId: String? = null,
+    @ColumnInfo(name = "library_name")
+    val libraryName: String? = null,
+    @ColumnInfo(name = "file_path")
+    val filePath: String? = null
 )
 
 @Entity(
@@ -147,6 +165,28 @@ data class EpisodeEntity(
     val sizeGb: Double?
 )
 
+@Entity(
+    tableName = "other_media",
+    indices = [
+        Index(value = ["title"]),
+        Index(value = ["library_name"]),
+        Index(value = ["media_type"])
+    ]
+)
+data class OtherMediaEntity(
+    @PrimaryKey
+    val id: String,
+    val title: String,
+    @ColumnInfo(name = "media_type")
+    val mediaType: String,
+    @ColumnInfo(name = "created_utc_millis")
+    val createdUtcMillis: Long?,
+    @ColumnInfo(name = "library_id")
+    val libraryId: String? = null,
+    @ColumnInfo(name = "library_name")
+    val libraryName: String? = null
+)
+
 data class SeasonWithEpisodes(
     @Embedded
     val season: SeasonEntity,
@@ -192,6 +232,9 @@ interface MovieDao {
     @Query("SELECT id FROM movies")
     suspend fun getAllMovieIds(): List<String>
 
+    @Query("SELECT COUNT(*) FROM movies WHERE library_id IS NULL")
+    suspend fun countWithoutLibrary(): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(movies: List<MovieEntity>)
 
@@ -219,6 +262,9 @@ interface SeriesDao {
 
     @Query("SELECT id FROM series")
     suspend fun getAllSeriesIds(): List<String>
+
+    @Query("SELECT COUNT(*) FROM series WHERE library_id IS NULL")
+    suspend fun countWithoutLibrary(): Int
 
     @Upsert
     suspend fun upsertSeries(series: List<SeriesEntity>)
@@ -276,18 +322,94 @@ interface SeriesDao {
     suspend fun clearEpisodes()
 }
 
+@Dao
+interface OtherMediaDao {
+    @Query("SELECT * FROM other_media ORDER BY title")
+    fun getAllOtherMedia(): Flow<List<OtherMediaEntity>>
+
+    @Query("SELECT * FROM other_media WHERE title LIKE '%' || :query || '%' ORDER BY title")
+    fun searchOtherMediaByTitle(query: String): Flow<List<OtherMediaEntity>>
+
+    @Query("SELECT COUNT(*) FROM other_media WHERE library_id IS NULL")
+    suspend fun countWithoutLibrary(): Int
+
+    @Query("SELECT id FROM other_media WHERE library_id = :libraryId")
+    suspend fun getIdsByLibraryId(libraryId: String): List<String>
+
+    @Query("SELECT id FROM other_media WHERE library_id IS NULL")
+    suspend fun getIdsWithoutLibraryId(): List<String>
+
+    @Query("DELETE FROM other_media WHERE library_id = :libraryId")
+    suspend fun clearByLibraryId(libraryId: String)
+
+    @Query("DELETE FROM other_media WHERE library_id IS NULL")
+    suspend fun clearWithoutLibraryId()
+
+    @Query("DELETE FROM other_media WHERE library_id = :libraryId AND id NOT IN (:keepIds)")
+    suspend fun deleteByLibraryIdNotIn(libraryId: String, keepIds: List<String>)
+
+    @Query("DELETE FROM other_media WHERE library_id IS NULL AND id NOT IN (:keepIds)")
+    suspend fun deleteWithoutLibraryIdNotIn(keepIds: List<String>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(items: List<OtherMediaEntity>)
+
+    @Query("DELETE FROM other_media")
+    suspend fun clearAll()
+}
+
+val MIGRATION_4_5 = object : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE movies ADD COLUMN production_year INTEGER")
+        db.execSQL("ALTER TABLE movies ADD COLUMN file_path TEXT")
+        db.execSQL("ALTER TABLE series ADD COLUMN production_year INTEGER")
+        db.execSQL("ALTER TABLE series ADD COLUMN file_path TEXT")
+    }
+}
+
+val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE movies ADD COLUMN library_id TEXT")
+        db.execSQL("ALTER TABLE movies ADD COLUMN library_name TEXT")
+        db.execSQL("ALTER TABLE series ADD COLUMN library_id TEXT")
+        db.execSQL("ALTER TABLE series ADD COLUMN library_name TEXT")
+    }
+}
+
+val MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS other_media (
+                id TEXT NOT NULL PRIMARY KEY,
+                title TEXT NOT NULL,
+                media_type TEXT NOT NULL,
+                created_utc_millis INTEGER,
+                library_id TEXT,
+                library_name TEXT
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_other_media_title ON other_media(title)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_other_media_library_name ON other_media(library_name)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_other_media_media_type ON other_media(media_type)")
+    }
+}
+
 @Database(
     entities = [
         MovieEntity::class,
         SeriesEntity::class,
         SeasonEntity::class,
-        EpisodeEntity::class
+        EpisodeEntity::class,
+        OtherMediaEntity::class
     ],
-    version = 4,
+    version = 7,
     exportSchema = false
 )
 @TypeConverters(RoomConverters::class)
 abstract class BibliotecaDatabase : RoomDatabase() {
     abstract fun movieDao(): MovieDao
     abstract fun seriesDao(): SeriesDao
+    abstract fun otherMediaDao(): OtherMediaDao
 }

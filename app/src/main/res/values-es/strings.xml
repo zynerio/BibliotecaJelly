@@ -1,0 +1,191 @@
+<resources>
+    <string name="app_name">BibliotecaJelly</string>
+
+    <string name="update_available_title">Nueva versión disponible</string>
+    <string name="update_available_message">Hay una nueva versión disponible: %1$s. Versión instalada: %2$s.</string>
+    <string name="download">Descargar</string>
+    <string name="later">Más tarde</string>
+
+    <string name="server">Servidor</string>
+    <string name="sync">Sincronización</string>
+    <string name="data">Datos</string>
+
+    <string name="server_address_label">Dirección del servidor (IP o dominio)</string>
+    <string name="server_config_title">Configuración del servidor Jellyfin</string>
+    <string name="auto_sync_title">Sincronización automática</string>
+    <string name="movie_details_title">Detalles de películas</string>
+    <string name="library_view_title">Vista de biblioteca</string>
+    <string name="offline_posters_title">Portadas offline</string>
+    <string name="details_info_title">Información en detalles</string>
+    <string name="port">Puerto</string>
+    <string name="username">Usuario</string>
+    <string name="password">Contraseña</string>
+    <string name="api_key_optional">API key (opcional)</string>
+    <string name="test_connection">Probar conexión</string>
+
+    <string name="auto_sync_on_start">Al iniciar la aplicación</string>
+    <string name="auto_sync_on_close">Al cerrar la aplicación</string>
+    <string name="auto_sync_manual_only">Solo manual</string>
+    <string name="movie_details_all">Todos (más completo, más lento)</string>
+    <string name="movie_details_recent">Solo recientes (más rápido)</string>
+    <string name="list_infinite">Listado infinito</string>
+    <string name="list_paged">Paginado (50 por página, swipe lateral)</string>
+    <string name="download_posters_offline">Descargar portadas para uso sin conexión</string>
+    <string name="show_file_path_details">Mostrar ruta del archivo en el detalle</string>
+    <string name="advanced_libraries_view">Vista avanzada por bibliotecas</string>
+    <string name="libraries_label">Bibliotecas</string>
+    <string name="all_libraries">Todas las bibliotecas</string>
+    <string name="library_unassigned">Sin asignar</string>
+
+    <string name="sync_history">Historial de sincronización</string>
+    <string name="cancel">Cancelar</string>
+    <string name="save">Guardar</string>
+    <string name="validating">Validando...</string>
+    <string name="clear_synced_data">Borrar datos sincronizados</string>
+    <string name="open_github">Abrir GitHub</string>
+    <string name="delete">Borrar</string>
+    <string name="clear_data_select_scope">Selecciona qué datos sincronizados quieres borrar.</string>
+    <string name="movies_only">Solo películas</string>
+    <string name="series_only">Solo series</string>
+    <string name="type_delete_confirm">Escribe BORRAR para confirmar</string>
+    <string name="delete_confirm_word">BORRAR</string>
+    <string name="clear_success_all">Se borraron películas, series y otros contenidos sincronizados.</string>
+    <string name="clear_success_movies">Se borraron solo las películas sincronizadas.</string>
+    <string name="clear_success_series">Se borraron solo las series sincronizadas.</string>
+    <string name="connection_ok">Conexión correcta</string>
+    <string name="connection_error">Error de conexión</string>
+    <string name="close">Cerrar</string>
+    <string name="clear_history">Borrar historial</string>
+    <string name="empty_history">Sin historial todavía</string>
+
+    <string name="app_title">Biblioteca Jelly</string>
+    <string name="configure">Configurar</string>
+    <string name="stop">Parar</string>
+    <string name="search">Buscar</string>
+    <string name="what_to_sync">¿Qué deseas sincronizar?</string>
+    <string name="all">Todo</string>
+    <string name="movies">Películas</string>
+    <string name="series">Series</string>
+    <string name="others">Otros</string>
+    <string name="videos">Videos</string>
+    <string name="images">Imágenes</string>
+    <string name="recently_added">Últimos añadidos</string>
+    <string name="favorites">Favoritos</string>
+    <string name="sort_az">A-Z</string>
+    <string name="no_created_date_all">Sin fecha de alta disponible todavía. Sincroniza para completar metadatos.</string>
+    <string name="no_created_date_partial">%1$d elementos sin fecha de alta se muestran al final.</string>
+    <string name="hold_filters_hint">Mantén pulsado en \"Filtros activos\" para limpiar filtros de películas y series.</string>
+    <string name="clear_genre">Limpiar género</string>
+    <string name="clear_details">Limpiar detalles</string>
+    <string name="last_update">Última actualización: %1$s</string>
+    <string name="last_update_pending">Última actualización: pendiente</string>
+    <string name="fast">Rápida</string>
+    <string name="details_no_catalog">Detalles (sin catálogo)</string>
+    <string name="no_results">Sin resultados</string>
+    <string name="movies_tab_count">Películas (%1$s)</string>
+    <string name="series_tab_count">Series (%1$s)</string>
+    <string name="others_tab_count">Otros (%1$s)</string>
+    <string name="movies_showing">Películas: mostrando %1$d de %2$d</string>
+    <string name="series_showing">Series: mostrando %1$d de %2$d</string>
+    <string name="others_showing">Otros: mostrando %1$d de %2$d</string>
+    <string name="items_count">Elementos: %1$d</string>
+    <string name="other_items_dialog_title">Listado de %1$s</string>
+    <string name="new_since_last_visit">Novedades desde última visita: %1$s</string>
+    <string name="mark_seen">Marcar vistas</string>
+    <string name="active_filters">Filtros activos: %1$d</string>
+    <string name="sync_warning_large_collections">Aviso: colecciones grandes pueden tardar varios minutos en sincronizar.</string>
+    <string name="sync_cancelled_prefix">Sincronización cancelada</string>
+
+    <string name="db_size_calculating">Tamaño base de datos: calculando...</string>
+    <string name="posters_size_calculating">Portadas locales: calculando...</string>
+    <string name="phase_syncing_catalog">Sincronizando catálogo</string>
+    <string name="phase_syncing_recent">Sincronizando últimos añadidos</string>
+    <string name="phase_refreshing_movies_full">Refrescando catálogo de películas (completo)</string>
+    <string name="phase_syncing_details_only">Sincronizando solo detalles</string>
+    <string name="phase_sync_completed">Sincronización completada</string>
+    <string name="phase_sync_cancelled">Sincronización cancelada</string>
+
+    <string name="server_not_checked">Servidor: sin comprobar</string>
+    <string name="server_active">Servidor: activo</string>
+    <string name="server_active_unauth">Servidor: activo (sin autenticar)</string>
+    <string name="server_inactive">Servidor: inactivo</string>
+    <string name="server_config_incomplete">Servidor: configuración incompleta</string>
+    <string name="server_unknown_state">Servidor: estado desconocido</string>
+
+    <string name="warning_partial_sync">Sincronización cancelada: solo tendrás una sincronización parcial.</string>
+    <string name="timeout_validating_server">Tiempo de conexión agotado al validar el servidor</string>
+    <string name="timeout_validating_credentials">Tiempo de conexión agotado al validar credenciales</string>
+    <string name="test_connection_success">Conexión correcta con el servidor</string>
+
+    <string name="db_size_text">Tamaño base de datos: %1$s%2$s</string>
+    <string name="posters_size_text">Portadas locales: %1$d archivos / %2$s</string>
+    <string name="free_space_ratio"> (%.2f%% del espacio libre)</string>
+
+    <string name="error_server_config_incomplete">Configuración del servidor incompleta</string>
+    <string name="error_server_config_not_found">Configuración del servidor no encontrada</string>
+    <string name="error_username_required">Usuario requerido</string>
+    <string name="error_no_authenticated_user">No hay usuario autenticado</string>
+    <string name="error_auth_401_user_pass">Auth 401: usuario o contraseña incorrectos</string>
+    <string name="error_http_403">Auth 403: acceso denegado por el servidor</string>
+    <string name="error_http_404">HTTP 404: endpoint no encontrado (revisa URL/basePath)</string>
+    <string name="error_http_5xx">HTTP %1$d: servidor/proxy no disponible</string>
+    <string name="error_http_generic">HTTP %1$d: fallo de conexión con el servidor</string>
+    <string name="error_dns">DNS: no se resuelve el dominio/IP</string>
+    <string name="error_nat_port">NAT/Puerto: conexión rechazada o puerto cerrado</string>
+    <string name="error_timeout_network">Timeout: sin respuesta del servidor (red/NAT/firewall)</string>
+    <string name="error_ssl_handshake">SSL: fallo de certificado/handshake TLS</string>
+    <string name="error_ssl_invalid">SSL: conexión segura no válida</string>
+    <string name="error_network_unknown">Error de red desconocido</string>
+
+    <string name="mode_normal">Normal</string>
+    <string name="mode_recently_added">Últimos añadidos</string>
+    <string name="mode_fast">Rápida</string>
+    <string name="mode_details_only">Solo detalles</string>
+    <string name="scope_all">Todo</string>
+    <string name="scope_movies">Películas</string>
+    <string name="scope_series">Series</string>
+    <string name="scope_others">Otros</string>
+    <string name="sync_history_entry">%1$s · %2$s · %3$s · Películas: %4$d (detalles: %5$d) · Series: %6$d (detalles: %7$d) · Otros: %8$d</string>
+    <string name="remove_from_favorites">Quitar de favoritos</string>
+    <string name="add_to_favorites">Añadir a favoritos</string>
+    <string name="genres_none">Géneros: -</string>
+    <string name="genres_title">Géneros:</string>
+    <string name="technical_details">Detalles técnicos:</string>
+    <string name="view_season_details">Ver detalle por temporada y actualizar</string>
+    <string name="label_genres">Géneros: %1$s</string>
+
+    <string name="movie_updating_info">Actualizando información de la película...</string>
+    <string name="series_updating_info">Actualizando información de temporadas y episodios...</string>
+
+    <string name="label_format">Formato: %1$s</string>
+    <string name="label_quality">Calidad: %1$s</string>
+    <string name="label_resolution">Resolución: %1$s</string>
+    <string name="tech_quality">Calidad</string>
+    <string name="tech_format">Formato</string>
+    <string name="tech_resolution">Resolución</string>
+    <string name="label_year">Año: %1$d</string>
+    <string name="label_bitrate">Bitrate: %1$s</string>
+    <string name="label_duration">Duración: %1$s</string>
+    <string name="label_size">Tamaño: %1$s</string>
+    <string name="label_audio">Audios: %1$s</string>
+    <string name="label_subtitles">Subtítulos: %1$s</string>
+    <string name="label_path">Ruta: %1$s</string>
+    <string name="label_seasons">Temporadas: %1$d</string>
+    <string name="label_episodes">Episodios: %1$d</string>
+
+    <string name="season_detail_title">Detalle por temporada:</string>
+    <string name="season_item_short">T%1$d: %2$d eps</string>
+    <string name="series_no_season_details">No hay detalle de temporadas todavía. Usa Actualizar.</string>
+
+    <string name="update_this_movie">Actualizar esta película</string>
+    <string name="update_this_series">Actualizar esta serie</string>
+    <string name="updating">Actualizando...</string>
+    <string name="close_when_done">Puedes cerrar cuando termine la actualización.</string>
+    <string name="empty_state">No se encontraron bibliotecas. Sincroniza para cargar el contenido.</string>
+    <string name="library_cover_dialog_title">Portada de %1$s</string>
+    <string name="library_cover_choose_manual">Elige manualmente una de estas portadas para dejarla fija.</string>
+    <string name="library_cover_restore_automatic">Restaurar automática</string>
+    <string name="library_cover_no_candidates">Todavía no hay pósters disponibles en esta biblioteca para elegir.</string>
+    <string name="library_cover_hint">Mantén pulsada una tarjeta de biblioteca para cambiar su portada.</string>
+    <string name="got_it">Entendido</string>
+</resources>
