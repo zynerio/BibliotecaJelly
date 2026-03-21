@@ -8,6 +8,46 @@ Importa los metadatos de películas y series, los almacena en una base de datos 
 
 ## Changelog interno
 
+### v2.1 (release pública)
+
+- Consolidación funcional de la rama 2.x en una única salida pública.
+- Pestaña **Otros** completa en modo clásico:
+  - agrupación ligera por tipo (Videos / Imágenes),
+  - filtro por biblioteca dentro de la pestaña,
+  - modal con búsqueda local y orden (`A-Z` / `Últimos añadidos`).
+- Sincronización de **Otros** con botones dedicados:
+  - Normal,
+  - Rápida,
+  - Últimos añadidos,
+  - además de inclusión en sincronización `Todo`.
+- Corrección de UX en novedades:
+  - "Marcar vistas" ahora limpia correctamente en modo clásico incluso con desfases de hora servidor/dispositivo.
+- Reconciliación de datos en `other_media`:
+  - limpieza de elementos eliminados en servidor durante sincronización completa,
+  - sin borrados agresivos en incremental por fecha.
+- Versión de aplicación actualizada a `2.1` (`versionCode = 8`).
+
+### v2.0 (interna, no publicada de forma independiente)
+
+- Nueva visualización de biblioteca en dos modos:
+  - **Modo clásico** (pestañas de Películas, Series y Otros),
+  - **Modo avanzado** por bibliotecas con filtrado visual.
+- Nueva pestaña **Otros** para contenido ligero (`Video` / `Photo`):
+  - tarjetas por tipo (Videos e Imágenes),
+  - modal con listado por nombre,
+  - búsqueda local y orden (`A-Z` / `Últimos añadidos`) dentro del modal,
+  - filtro por biblioteca dentro de la propia pestaña.
+- Enriquecimiento de catálogo con metadatos de biblioteca:
+  - asociación de películas y series a su biblioteca de origen,
+  - persistencia local para navegación y filtros más precisos.
+- Mejoras de experiencia previas consolidadas:
+  - historial de sincronización gestionable,
+  - diálogo con scroll en historiales largos,
+  - año de producción visible en detalles,
+  - opción para mostrar/ocultar ruta de archivo.
+- Localización ampliada y consistente (ES/EN) en interfaz y mensajes de estado.
+- Versión de aplicación actualizada a `2.0` (`versionCode = 7`).
+- Nota: esta versión se usó como base interna y se consolidó directamente en la salida pública `2.1`.
 ### v1.6
 
 - Configuración de servidor más robusta:
@@ -77,9 +117,59 @@ Importa los metadatos de películas y series, los almacena en una base de datos 
 
 ## Estado
 
-- Versión actual: **1.5**
+- Versión interna base: **2.0**
+- Versión pública actual: **2.1**
 - Android mínimo: **7.0 (API 24)**
 - Stack principal: **Kotlin + Jetpack Compose + Material 3**
+
+## Funcionalidades destacadas (v2.1)
+
+### Novedades de la versión
+
+- Sincronización de “últimos añadidos” para películas y series sin refresco completo.
+- Aviso in-app de actualización al detectar una release más reciente en GitHub.
+- Modos de sincronización separados (normal / rápida / detalles).
+- Historial de actualizaciones visible desde opciones y desde la fecha de última actualización.
+- Botón “Probar conexión” en configuración.
+- Filtros combinables por géneros y detalles técnicos.
+- Modo avanzado de bibliotecas para explorar por colección, manteniendo modo clásico.
+- Pestaña **Otros** con navegación ligera para vídeos e imágenes personales.
+
+## Roadmap consolidado (2.0 -> 2.1)
+
+- Integración completa de bibliotecas en modo avanzado.
+- Portadas de biblioteca automáticas + selección manual.
+- Soporte de contenido **Otros** (Video/Photo) en modelo local, repositorio, ViewModel y UI.
+- Botonera de sincronización de **Otros** (normal / rápida / últimos añadidos).
+- Corrección de "Marcar vistas" en modo clásico.
+- Reconciliación de eliminados para `other_media` en sincronización completa.
+
+## Checklist QA final (v2.1)
+
+1. Configuración y conexión
+  - Guardar configuración con servidor válido y comprobar estado activo.
+  - Probar conexión con credenciales válidas e inválidas.
+2. Sincronización por alcance
+  - Ejecutar `Todo`, `Películas`, `Series` y `Otros` en modo normal.
+  - Ejecutar `Todo`, `Películas`, `Series` y `Otros` en modo rápida.
+  - Ejecutar `Películas`, `Series` y `Otros` en `Últimos añadidos`.
+3. Contenido Otros
+  - Ver pestaña `Otros` con tarjetas por tipo (Videos/Imágenes).
+  - Abrir modal de tipo, buscar por título y alternar orden `A-Z` / `Últimos añadidos`.
+  - Aplicar filtro por biblioteca dentro de `Otros` y validar conteos.
+4. Novedades
+  - Ver contador de novedades por pestaña.
+  - Pulsar `Marcar vistas` y validar limpieza inmediata del contador.
+5. Modo avanzado
+  - Abrir bibliotecas, cambiar portadas manual/automático y comprobar persistencia.
+  - Verificar cambio correcto entre tabs de contenido dentro de una biblioteca.
+6. Integridad local
+  - Borrar datos sincronizados por alcance y validar limpieza.
+  - Ejecutar sync completa de `Otros` y validar reconciliación de eliminados.
+7. Regresión visual
+  - Revisar layout en móvil (portrait/landscape) y en tablet si disponible.
+  - Confirmar textos ES/EN sin claves faltantes.
+
 
 ## Funcionalidades destacadas (v1.6)
 
