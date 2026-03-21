@@ -8,6 +8,19 @@ Importa los metadatos de películas y series, los almacena en una base de datos 
 
 ## Changelog interno
 
+### v2.2 (release pública)
+
+- Ajuste de navegación con tecla atrás en móvil para evitar cierres accidentales de la app.
+- En biblioteca:
+  - primero cierra diálogos abiertos,
+  - vuelve a "Todas las bibliotecas" cuando estás dentro de una biblioteca,
+  - y solo sale de la app con doble pulsación atrás cuando no hay más navegación posible.
+- En configuración:
+  - primero cierra diálogos abiertos (borrar datos, conexión e historial),
+  - vuelve a biblioteca si venías desde ahí,
+  - y aplica doble pulsación atrás para salir cuando estás en la raíz.
+- Versión de aplicación actualizada a `2.2` (`versionCode = 9`).
+
 ### v2.1 (release pública)
 
 - Consolidación funcional de la rama 2.x en una única salida pública.
@@ -118,7 +131,7 @@ Importa los metadatos de películas y series, los almacena en una base de datos 
 ## Estado
 
 - Versión interna base: **2.0**
-- Versión pública actual: **2.1**
+- Versión pública actual: **2.2**
 - Android mínimo: **7.0 (API 24)**
 - Stack principal: **Kotlin + Jetpack Compose + Material 3**
 
@@ -169,6 +182,8 @@ Importa los metadatos de películas y series, los almacena en una base de datos 
 7. Regresión visual
   - Revisar layout en móvil (portrait/landscape) y en tablet si disponible.
   - Confirmar textos ES/EN sin claves faltantes.
+    
+<img width="878" height="543" alt="cap6" src="https://github.com/user-attachments/assets/a4fbd26b-a6c4-46ba-a38a-d833a33a3016" />
 
 
 ## Funcionalidades destacadas (v1.6)
@@ -183,6 +198,7 @@ Importa los metadatos de películas y series, los almacena en una base de datos 
 - Filtros combinables por géneros y detalles técnicos.
 
 ![cap3](https://github.com/user-attachments/assets/3636ad6f-7bc3-4441-b197-cca6753da99f)
+
 
 ### Base consolidada (v1.3)
 
