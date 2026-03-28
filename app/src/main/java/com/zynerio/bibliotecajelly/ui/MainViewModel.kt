@@ -92,6 +92,8 @@ data class LibraryUiState(
     val seriesSortMode: LibrarySortMode = LibrarySortMode.Alphabetical,
     val showOnlyMovieFavorites: Boolean = false,
     val showOnlySeriesFavorites: Boolean = false,
+    val showOnlyMovieDuplicates: Boolean = false,
+    val showOnlySeriesDuplicates: Boolean = false,
     val selectedMovieGenres: Set<String> = emptySet(),
     val selectedSeriesGenres: Set<String> = emptySet(),
     val selectedMovieTechnicalFilters: Map<TechnicalFilterType, Set<String>> = emptyMap(),
@@ -575,6 +577,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    fun onDuplicateFilterToggled() {
+        val library = _uiState.value.library
+        _uiState.value = _uiState.value.copy(
+            library = when (library.selectedTab) {
+                LibraryTab.Movies -> library.copy(
+                    showOnlyMovieDuplicates = !library.showOnlyMovieDuplicates
+                )
+
+                LibraryTab.Series -> library.copy(
+                    showOnlySeriesDuplicates = !library.showOnlySeriesDuplicates
+                )
+
+                LibraryTab.Others -> library
+            }
+        )
+    }
+
     fun onMovieFavoriteToggled(movieId: String, isFavorite: Boolean) {
         viewModelScope.launch {
             repository.setMovieFavorite(movieId, isFavorite)
@@ -625,6 +644,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     library = library.copy(
                         searchQuery = "",
                         showOnlyMovieFavorites = false,
+                        showOnlyMovieDuplicates = false,
                         selectedMovieGenres = emptySet(),
                         selectedMovieTechnicalFilters = emptyMap()
                     )
@@ -637,6 +657,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     library = library.copy(
                         searchQuery = "",
                         showOnlySeriesFavorites = false,
+                        showOnlySeriesDuplicates = false,
                         selectedSeriesGenres = emptySet(),
                         selectedSeriesTechnicalFilters = emptyMap(),
                         selectedSeriesTechnicalMatchedIds = null
@@ -664,6 +685,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 searchQuery = "",
                 showOnlyMovieFavorites = false,
                 showOnlySeriesFavorites = false,
+                showOnlyMovieDuplicates = false,
+                showOnlySeriesDuplicates = false,
                 selectedMovieGenres = emptySet(),
                 selectedSeriesGenres = emptySet(),
                 selectedMovieTechnicalFilters = emptyMap(),

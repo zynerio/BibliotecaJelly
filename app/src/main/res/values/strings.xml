@@ -71,6 +71,7 @@
     <string name="images">Images</string>
     <string name="recently_added">Recently added</string>
     <string name="favorites">Favorites</string>
+    <string name="duplicates">Duplicates</string>
     <string name="sort_az">A-Z</string>
     <string name="no_created_date_all">No added date available yet. Sync to complete metadata.</string>
     <string name="no_created_date_partial">%1$d items without added date are shown at the end.</string>

@@ -102,6 +102,22 @@ import com.zynerio.bibliotecajelly.ui.theme.BibliotecaJellyTheme
 
 private const val PROJECT_GITHUB_URL = "https://github.com/zynerio/BibliotecaJelly"
 
+private data class MovieDuplicateKey(
+    val normalizedTitle: String,
+    val productionYear: Int?,
+    val durationMinutes: Int?
+)
+
+private data class SeriesDuplicateKey(
+    val normalizedTitle: String,
+    val productionYear: Int?,
+    val totalSeasons: Int,
+    val totalEpisodes: Int
+)
+
+private fun normalizeDuplicateTitle(rawTitle: String): String =
+    rawTitle.trim().lowercase().replace(Regex("\\s+"), " ")
+
 class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
@@ -215,6 +231,7 @@ fun BibliotecaJellyApp(viewModel: MainViewModel) {
                 onTechnicalFilterSelected = viewModel::onTechnicalFilterSelected,
                 onSortModeSelected = viewModel::onSortModeSelected,
                 onFavoriteFilterToggled = viewModel::onFavoriteFilterToggled,
+                onDuplicateFilterToggled = viewModel::onDuplicateFilterToggled,
                 onMovieFavoriteToggled = viewModel::onMovieFavoriteToggled,
                 onSeriesFavoriteToggled = viewModel::onSeriesFavoriteToggled,
                 onMarkNovedadesAsSeen = { markUntilEpochMillis ->
@@ -831,6 +848,7 @@ fun LibraryScreen(
     onTechnicalFilterSelected: (TechnicalFilterType, String) -> Unit,
     onSortModeSelected: (LibrarySortMode) -> Unit,
     onFavoriteFilterToggled: () -> Unit,
+    onDuplicateFilterToggled: () -> Unit,
     onMovieFavoriteToggled: (String, Boolean) -> Unit,
     onSeriesFavoriteToggled: (String, Boolean) -> Unit,
     onMarkNovedadesAsSeen: (Long?) -> Unit,
@@ -894,7 +912,14 @@ fun LibraryScreen(
         if (genreFilters.isNotEmpty()) add("genre")
         if (technicalFilters.isNotEmpty()) add("technical")
         if (library.showOnlyMovieFavorites || library.showOnlySeriesFavorites) add("favorites")
+        if (library.showOnlyMovieDuplicates || library.showOnlySeriesDuplicates) add("duplicates")
     }.size
+
+    val activeDuplicateOnly = when (library.selectedTab) {
+        LibraryTab.Movies -> library.showOnlyMovieDuplicates
+        LibraryTab.Series -> library.showOnlySeriesDuplicates
+        LibraryTab.Others -> false
+    }
 
     val genreFilteredMovies = if (library.selectedMovieGenres.isEmpty()) {
         movies
@@ -962,6 +987,54 @@ fun LibraryScreen(
         filteredSeries
     }
 
+    val duplicateFilteredMovies = if (library.showOnlyMovieDuplicates) {
+        val duplicateTitleKeys = favoriteFilteredMovies
+            .groupingBy {
+                MovieDuplicateKey(
+                    normalizedTitle = normalizeDuplicateTitle(it.title),
+                    productionYear = it.productionYear,
+                    durationMinutes = it.durationMinutes
+                )
+            }
+            .eachCount()
+            .filter { (key, count) -> key.normalizedTitle.isNotBlank() && count > 1 }
+            .keys
+        favoriteFilteredMovies.filter {
+            MovieDuplicateKey(
+                normalizedTitle = normalizeDuplicateTitle(it.title),
+                productionYear = it.productionYear,
+                durationMinutes = it.durationMinutes
+            ) in duplicateTitleKeys
+        }
+    } else {
+        favoriteFilteredMovies
+    }
+
+    val duplicateFilteredSeries = if (library.showOnlySeriesDuplicates) {
+        val duplicateTitleKeys = favoriteFilteredSeries
+            .groupingBy {
+                SeriesDuplicateKey(
+                    normalizedTitle = normalizeDuplicateTitle(it.title),
+                    productionYear = it.productionYear,
+                    totalSeasons = it.totalSeasons,
+                    totalEpisodes = it.totalEpisodes
+                )
+            }
+            .eachCount()
+            .filter { (key, count) -> key.normalizedTitle.isNotBlank() && count > 1 }
+            .keys
+        favoriteFilteredSeries.filter {
+            SeriesDuplicateKey(
+                normalizedTitle = normalizeDuplicateTitle(it.title),
+                productionYear = it.productionYear,
+                totalSeasons = it.totalSeasons,
+                totalEpisodes = it.totalEpisodes
+            ) in duplicateTitleKeys
+        }
+    } else {
+        favoriteFilteredSeries
+    }
+
     val activeSortMode = if (library.selectedTab == LibraryTab.Movies) {
         library.movieSortMode
     } else {
@@ -969,16 +1042,16 @@ fun LibraryScreen(
     }
 
     val sortedMovies = when (library.movieSortMode) {
-        LibrarySortMode.Alphabetical -> favoriteFilteredMovies.sortedBy { it.title.lowercase() }
-        LibrarySortMode.RecentlyAdded -> favoriteFilteredMovies.sortedWith(
+        LibrarySortMode.Alphabetical -> duplicateFilteredMovies.sortedBy { it.title.lowercase() }
+        LibrarySortMode.RecentlyAdded -> duplicateFilteredMovies.sortedWith(
             compareByDescending<MovieEntity> { it.createdUtcMillis ?: Long.MIN_VALUE }
                 .thenBy { it.title.lowercase() }
         )
     }
 
     val sortedSeries = when (library.seriesSortMode) {
-        LibrarySortMode.Alphabetical -> favoriteFilteredSeries.sortedBy { it.title.lowercase() }
-        LibrarySortMode.RecentlyAdded -> favoriteFilteredSeries.sortedWith(
+        LibrarySortMode.Alphabetical -> duplicateFilteredSeries.sortedBy { it.title.lowercase() }
+        LibrarySortMode.RecentlyAdded -> duplicateFilteredSeries.sortedWith(
             compareByDescending<SeriesEntity> { it.createdUtcMillis ?: Long.MIN_VALUE }
                 .thenBy { it.title.lowercase() }
         )
@@ -1496,6 +1569,17 @@ fun LibraryScreen(
                     label = {
                         Text(
                             text = stringResource(R.string.favorites),
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                )
+                FilterChip(
+                    selected = activeDuplicateOnly,
+                    onClick = onDuplicateFilterToggled,
+                    modifier = Modifier.height(32.dp),
+                    label = {
+                        Text(
+                            text = stringResource(R.string.duplicates),
                             style = MaterialTheme.typography.labelSmall
                         )
                     }
