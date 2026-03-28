@@ -8,6 +8,22 @@ Importa los metadatos de películas y series, los almacena en una base de datos 
 
 ## Changelog interno
 
+### v2.3 (release pública)
+
+- Ajuste de navegación con tecla atrás en móvil para evitar cierres accidentales de la app.
+- Nuevo filtro de búsqueda **Duplicados** en Películas y Series:
+  - muestra únicamente elementos cuyo título coincide exactamente con otro,
+  - útil para localizar entradas repetidas del catálogo.
+- En biblioteca:
+  - primero cierra diálogos abiertos,
+  - vuelve a "Todas las bibliotecas" cuando estás dentro de una biblioteca,
+  - y solo sale de la app con doble pulsación atrás cuando no hay más navegación posible.
+- En configuración:
+  - primero cierra diálogos abiertos (borrar datos, conexión e historial),
+  - vuelve a biblioteca si venías desde ahí,
+  - y aplica doble pulsación atrás para salir cuando estás en la raíz.
+- Versión de aplicación actualizada a `2.3` (`versionCode = 10`).
+
 ### v2.2 (release pública)
 
 - Ajuste de navegación con tecla atrás en móvil para evitar cierres accidentales de la app.
