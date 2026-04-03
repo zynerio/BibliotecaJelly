@@ -1,18 +1,23 @@
 package com.zynerio.bibliotecajelly
 
 import android.app.Activity
+import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import android.widget.ImageView
+import androidx.core.content.FileProvider
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -36,6 +41,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -76,6 +82,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clipToBounds
@@ -94,7 +101,9 @@ import com.zynerio.bibliotecajelly.data.ListDisplayMode
 import com.zynerio.bibliotecajelly.data.LibrarySortMode
 import com.zynerio.bibliotecajelly.data.MovieDetailsSyncMode
 import com.zynerio.bibliotecajelly.data.ClearDataScope
+import com.zynerio.bibliotecajelly.data.DuplicateReportFormat
 import com.zynerio.bibliotecajelly.ui.LibraryTab
+import com.zynerio.bibliotecajelly.ui.DuplicateMatchMode
 import com.zynerio.bibliotecajelly.ui.MainUiState
 import com.zynerio.bibliotecajelly.ui.MainViewModel
 import com.zynerio.bibliotecajelly.ui.TechnicalFilterType
@@ -102,21 +111,30 @@ import com.zynerio.bibliotecajelly.ui.theme.BibliotecaJellyTheme
 
 private const val PROJECT_GITHUB_URL = "https://github.com/zynerio/BibliotecaJelly"
 
-private data class MovieDuplicateKey(
-    val normalizedTitle: String,
-    val productionYear: Int?,
-    val durationMinutes: Int?
-)
-
-private data class SeriesDuplicateKey(
-    val normalizedTitle: String,
-    val productionYear: Int?,
-    val totalSeasons: Int,
-    val totalEpisodes: Int
-)
-
 private fun normalizeDuplicateTitle(rawTitle: String): String =
     rawTitle.trim().lowercase().replace(Regex("\\s+"), " ")
+
+private fun movieDuplicateKey(movie: MovieEntity, mode: DuplicateMatchMode): String? {
+    val normalized = normalizeDuplicateTitle(movie.title)
+    if (normalized.isBlank()) return null
+
+    return when (mode) {
+        DuplicateMatchMode.Flexible -> normalized
+        DuplicateMatchMode.Balanced -> "$normalized|${movie.productionYear ?: -1}"
+        DuplicateMatchMode.Strict -> "$normalized|${movie.productionYear ?: -1}|${movie.durationMinutes ?: -1}"
+    }
+}
+
+private fun seriesDuplicateKey(item: SeriesEntity, mode: DuplicateMatchMode): String? {
+    val normalized = normalizeDuplicateTitle(item.title)
+    if (normalized.isBlank()) return null
+
+    return when (mode) {
+        DuplicateMatchMode.Flexible -> normalized
+        DuplicateMatchMode.Balanced -> "$normalized|${item.productionYear ?: -1}"
+        DuplicateMatchMode.Strict -> "$normalized|${item.productionYear ?: -1}|${item.totalSeasons}|${item.totalEpisodes}"
+    }
+}
 
 class MainActivity : ComponentActivity() {
 
@@ -189,6 +207,10 @@ fun BibliotecaJellyApp(viewModel: MainViewModel) {
                 onDownloadPostersOfflineChanged = viewModel::onDownloadPostersOfflineChanged,
                 onShowFilePathChanged = viewModel::onShowFilePathChanged,
                 onLibrariesAdvancedViewChanged = viewModel::onLibrariesAdvancedViewChanged,
+                onReconcileDeletedOnRecentSyncChanged = viewModel::onReconcileDeletedOnRecentSyncChanged,
+                onReportMovieDuplicateMatchModeChanged = viewModel::onReportMovieDuplicateMatchModeChanged,
+                onReportSeriesDuplicateMatchModeChanged = viewModel::onReportSeriesDuplicateMatchModeChanged,
+                onExportDuplicateReport = viewModel::exportDuplicateReport,
                 onClearSyncHistory = viewModel::clearSyncHistory,
                 onClearLocalData = viewModel::clearLocalData,
                 onTestConnection = viewModel::testConnection,
@@ -232,6 +254,7 @@ fun BibliotecaJellyApp(viewModel: MainViewModel) {
                 onSortModeSelected = viewModel::onSortModeSelected,
                 onFavoriteFilterToggled = viewModel::onFavoriteFilterToggled,
                 onDuplicateFilterToggled = viewModel::onDuplicateFilterToggled,
+                onDuplicateMatchModeSelected = viewModel::onDuplicateMatchModeSelected,
                 onMovieFavoriteToggled = viewModel::onMovieFavoriteToggled,
                 onSeriesFavoriteToggled = viewModel::onSeriesFavoriteToggled,
                 onMarkNovedadesAsSeen = { markUntilEpochMillis ->
@@ -303,6 +326,15 @@ fun ConfigScreen(
     onDownloadPostersOfflineChanged: (Boolean) -> Unit,
     onShowFilePathChanged: (Boolean) -> Unit,
     onLibrariesAdvancedViewChanged: (Boolean) -> Unit,
+    onReconcileDeletedOnRecentSyncChanged: (Boolean) -> Unit,
+    onReportMovieDuplicateMatchModeChanged: (DuplicateMatchMode) -> Unit,
+    onReportSeriesDuplicateMatchModeChanged: (DuplicateMatchMode) -> Unit,
+    onExportDuplicateReport: (
+        DuplicateReportFormat,
+        DuplicateMatchMode,
+        DuplicateMatchMode,
+        (Boolean, String, java.io.File?) -> Unit
+    ) -> Unit,
     onClearSyncHistory: () -> Unit,
     onClearLocalData: (ClearDataScope) -> Unit,
     onTestConnection: ((Boolean, String) -> Unit) -> Unit,
@@ -331,8 +363,111 @@ fun ConfigScreen(
     val connectionDialogTitle = remember { mutableStateOf("") }
     val connectionDialogMessage = remember { mutableStateOf("") }
     val showSyncHistoryDialog = remember { mutableStateOf(false) }
+    val showReportDialog = remember { mutableStateOf(false) }
+    val showShareFormatDialog = remember { mutableStateOf(false) }
+    val reportDialogTitle = remember { mutableStateOf("") }
+    val reportDialogMessage = remember { mutableStateOf("") }
+    val pendingReportFormat = remember { mutableStateOf<DuplicateReportFormat?>(null) }
     val pressBackAgainMessage = stringResource(R.string.press_back_again_to_exit)
     val lastBackPressAt = remember { mutableLongStateOf(0L) }
+    val createTextReportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri ->
+        val format = pendingReportFormat.value ?: return@rememberLauncherForActivityResult
+        pendingReportFormat.value = null
+        if (uri == null) return@rememberLauncherForActivityResult
+        onExportDuplicateReport(
+            format,
+            config.reportMovieDuplicateMatchMode,
+            config.reportSeriesDuplicateMatchMode
+        ) { success, message, file ->
+            if (!success || file == null) {
+                reportDialogTitle.value = context.getString(R.string.connection_error)
+                reportDialogMessage.value = message
+                showReportDialog.value = true
+                return@onExportDuplicateReport
+            }
+            runCatching {
+                context.contentResolver.openOutputStream(uri)?.use { output ->
+                    file.inputStream().use { input ->
+                        input.copyTo(output)
+                    }
+                } ?: error("output_stream_unavailable")
+                reportDialogTitle.value = context.getString(R.string.duplicate_report_export_title)
+                reportDialogMessage.value = context.getString(R.string.duplicate_report_saved_user_location)
+                showReportDialog.value = true
+            }.getOrElse {
+                reportDialogTitle.value = context.getString(R.string.connection_error)
+                reportDialogMessage.value = context.getString(R.string.duplicate_report_export_error)
+                showReportDialog.value = true
+            }
+        }
+    }
+    val createCsvReportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/csv")
+    ) { uri ->
+        val format = pendingReportFormat.value ?: return@rememberLauncherForActivityResult
+        pendingReportFormat.value = null
+        if (uri == null) return@rememberLauncherForActivityResult
+        onExportDuplicateReport(
+            format,
+            config.reportMovieDuplicateMatchMode,
+            config.reportSeriesDuplicateMatchMode
+        ) { success, message, file ->
+            if (!success || file == null) {
+                reportDialogTitle.value = context.getString(R.string.connection_error)
+                reportDialogMessage.value = message
+                showReportDialog.value = true
+                return@onExportDuplicateReport
+            }
+            runCatching {
+                context.contentResolver.openOutputStream(uri)?.use { output ->
+                    file.inputStream().use { input ->
+                        input.copyTo(output)
+                    }
+                } ?: error("output_stream_unavailable")
+                reportDialogTitle.value = context.getString(R.string.duplicate_report_export_title)
+                reportDialogMessage.value = context.getString(R.string.duplicate_report_saved_user_location)
+                showReportDialog.value = true
+            }.getOrElse {
+                reportDialogTitle.value = context.getString(R.string.connection_error)
+                reportDialogMessage.value = context.getString(R.string.duplicate_report_export_error)
+                showReportDialog.value = true
+            }
+        }
+    }
+    val shareDuplicateReport: (DuplicateReportFormat) -> Unit = { format ->
+        onExportDuplicateReport(
+            format,
+            config.reportMovieDuplicateMatchMode,
+            config.reportSeriesDuplicateMatchMode
+        ) { success, message, file ->
+            if (success && file != null) {
+                val uri = FileProvider.getUriForFile(
+                    context,
+                    "${context.packageName}.fileprovider",
+                    file
+                )
+                val mimeType = if (format == DuplicateReportFormat.Csv) "text/csv" else "text/plain"
+                val intent = Intent(Intent.ACTION_SEND).apply {
+                    type = mimeType
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    putExtra(Intent.EXTRA_SUBJECT, context.getString(R.string.duplicate_report_share_subject))
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(
+                    Intent.createChooser(
+                        intent,
+                        context.getString(R.string.share_duplicate_report)
+                    )
+                )
+            } else {
+                reportDialogTitle.value = context.getString(R.string.connection_error)
+                reportDialogMessage.value = message
+                showReportDialog.value = true
+            }
+        }
+    }
 
     BackHandler {
         when {
@@ -343,6 +478,8 @@ fun ConfigScreen(
             }
 
             showConnectionDialog.value -> showConnectionDialog.value = false
+            showReportDialog.value -> showReportDialog.value = false
+            showShareFormatDialog.value -> showShareFormatDialog.value = false
             showSyncHistoryDialog.value -> showSyncHistoryDialog.value = false
             config.hasSavedConfig -> onCancel()
             else -> {
@@ -451,7 +588,28 @@ fun ConfigScreen(
                     enabled = !config.isValidating,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(stringResource(R.string.test_connection))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (config.isValidating) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp
+                            )
+                            Text(stringResource(R.string.validating))
+                        } else {
+                            Text(stringResource(R.string.test_connection))
+                        }
+                    }
+                }
+
+                config.connectedServerVersion?.let { version ->
+                    Text(
+                        text = stringResource(R.string.server_version_connected, version),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
                 }
             }
 
@@ -566,24 +724,329 @@ fun ConfigScreen(
                     )
                     Text(stringResource(R.string.advanced_libraries_view))
                 }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = config.reconcileDeletedOnRecentSync,
+                        onCheckedChange = { onReconcileDeletedOnRecentSyncChanged(it) }
+                    )
+                    Text(stringResource(R.string.reconcile_deleted_recent_sync))
+                }
+
+                Text(
+                    text = stringResource(R.string.reconcile_deleted_recent_sync_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
 
             if (optionsTabIndex.intValue == 2) {
-                Text(
-                    text = config.databaseSizeText,
-                    style = MaterialTheme.typography.bodySmall
-                )
-
-                Text(
-                    text = config.postersSizeText,
-                    style = MaterialTheme.typography.bodySmall
-                )
-
-                OutlinedButton(
-                    onClick = { showSyncHistoryDialog.value = true },
-                    modifier = Modifier.fillMaxWidth()
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color(0xFFEAF7EE)
+                    ),
+                    border = BorderStroke(
+                        width = 1.dp,
+                        color = Color(0xFFB8DDBF)
+                    )
                 ) {
-                    Text(stringResource(R.string.sync_history))
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = stringResource(R.string.data_section_storage_title),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = stringResource(R.string.data_section_storage_description),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Text(
+                            text = config.databaseSizeText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = config.postersSizeText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+
+                        val dbUsagePercent = (config.databaseUsagePercent ?: 0f).coerceIn(0f, 100f)
+                        val postersUsagePercent = (config.postersUsagePercent ?: 0f).coerceIn(0f, 100f)
+                        Text(
+                            text = stringResource(R.string.storage_usage_chart_title),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = stringResource(R.string.storage_usage_db_label, dbUsagePercent),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        LinearProgressIndicator(
+                            progress = { dbUsagePercent / 100f },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = Color(0xFF2E7D32),
+                            trackColor = Color(0xFFA5D6A7)
+                        )
+                        Text(
+                            text = stringResource(R.string.storage_usage_posters_label, postersUsagePercent),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        LinearProgressIndicator(
+                            progress = { postersUsagePercent / 100f },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = Color(0xFF00897B),
+                            trackColor = Color(0xFF80CBC4)
+                        )
+                    }
+                }
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.28f)
+                    ),
+                    border = BorderStroke(
+                        width = 1.dp,
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = stringResource(R.string.data_section_sync_title),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = stringResource(R.string.data_section_sync_description),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        OutlinedButton(
+                            onClick = { showSyncHistoryDialog.value = true },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(stringResource(R.string.sync_history))
+                        }
+                    }
+                }
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.26f)
+                    ),
+                    border = BorderStroke(
+                        width = 1.dp,
+                        color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.5f)
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = stringResource(R.string.data_section_reports_title),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = stringResource(R.string.data_section_reports_description),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+
+                        Text(
+                            text = stringResource(R.string.report_duplicate_modes_title),
+                            style = MaterialTheme.typography.titleMedium
+                        )
+
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(stringResource(R.string.movies))
+                            FilterChip(
+                                selected = config.reportMovieDuplicateMatchMode == DuplicateMatchMode.Flexible,
+                                onClick = { onReportMovieDuplicateMatchModeChanged(DuplicateMatchMode.Flexible) },
+                                label = { Text(stringResource(R.string.duplicate_mode_flexible)) }
+                            )
+                            FilterChip(
+                                selected = config.reportMovieDuplicateMatchMode == DuplicateMatchMode.Balanced,
+                                onClick = { onReportMovieDuplicateMatchModeChanged(DuplicateMatchMode.Balanced) },
+                                label = { Text(stringResource(R.string.duplicate_mode_balanced)) }
+                            )
+                            FilterChip(
+                                selected = config.reportMovieDuplicateMatchMode == DuplicateMatchMode.Strict,
+                                onClick = { onReportMovieDuplicateMatchModeChanged(DuplicateMatchMode.Strict) },
+                                label = { Text(stringResource(R.string.duplicate_mode_strict)) }
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(stringResource(R.string.series))
+                            FilterChip(
+                                selected = config.reportSeriesDuplicateMatchMode == DuplicateMatchMode.Flexible,
+                                onClick = { onReportSeriesDuplicateMatchModeChanged(DuplicateMatchMode.Flexible) },
+                                label = { Text(stringResource(R.string.duplicate_mode_flexible)) }
+                            )
+                            FilterChip(
+                                selected = config.reportSeriesDuplicateMatchMode == DuplicateMatchMode.Balanced,
+                                onClick = { onReportSeriesDuplicateMatchModeChanged(DuplicateMatchMode.Balanced) },
+                                label = { Text(stringResource(R.string.duplicate_mode_balanced)) }
+                            )
+                            FilterChip(
+                                selected = config.reportSeriesDuplicateMatchMode == DuplicateMatchMode.Strict,
+                                onClick = { onReportSeriesDuplicateMatchModeChanged(DuplicateMatchMode.Strict) },
+                                label = { Text(stringResource(R.string.duplicate_mode_strict)) }
+                            )
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                pendingReportFormat.value = DuplicateReportFormat.Text
+                                createTextReportLauncher.launch("duplicate_report.txt")
+                            },
+                            enabled = !config.isExportingReport,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.primary
+                            ),
+                            border = BorderStroke(
+                                width = 1.dp,
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
+                            )
+                        ) {
+                            Text(
+                                if (config.isExportingReport) {
+                                    stringResource(R.string.duplicate_report_exporting)
+                                } else {
+                                    stringResource(R.string.export_duplicate_report)
+                                }
+                            )
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                pendingReportFormat.value = DuplicateReportFormat.Csv
+                                createCsvReportLauncher.launch("duplicate_report.csv")
+                            },
+                            enabled = !config.isExportingReport,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.primary
+                            ),
+                            border = BorderStroke(
+                                width = 1.dp,
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
+                            )
+                        ) {
+                            Text(
+                                if (config.isExportingReport) {
+                                    stringResource(R.string.duplicate_report_exporting)
+                                } else {
+                                    stringResource(R.string.export_duplicate_report_csv)
+                                }
+                            )
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                showShareFormatDialog.value = true
+                            },
+                            enabled = !config.isExportingReport,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.primary
+                            ),
+                            border = BorderStroke(
+                                width = 1.dp,
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
+                            )
+                        ) {
+                            Text(
+                                if (config.isExportingReport) {
+                                    stringResource(R.string.duplicate_report_exporting)
+                                } else {
+                                    stringResource(R.string.share_duplicate_report)
+                                }
+                            )
+                        }
+                    }
+                }
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.38f)
+                    ),
+                    border = BorderStroke(
+                        width = 1.dp,
+                        color = MaterialTheme.colorScheme.error.copy(alpha = 0.75f)
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = stringResource(R.string.data_section_cleanup_title),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        Text(
+                            text = stringResource(R.string.data_section_cleanup_description),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+
+                        OutlinedButton(
+                            onClick = {
+                                showClearDialog.value = true
+                                showClearSuccess.value = false
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error
+                            ),
+                            border = BorderStroke(
+                                width = 1.dp,
+                                color = MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
+                            )
+                        ) {
+                            Text(
+                                text = stringResource(R.string.clear_synced_data),
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
                 }
             }
 
@@ -626,19 +1089,6 @@ fun ConfigScreen(
         }
 
         Spacer(modifier = Modifier.height(12.dp))
-
-        OutlinedButton(
-            onClick = {
-                showClearDialog.value = true
-                showClearSuccess.value = false
-            },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(
-                text = stringResource(R.string.clear_synced_data),
-                color = MaterialTheme.colorScheme.error
-            )
-        }
 
         Row(
             modifier = Modifier
@@ -753,6 +1203,54 @@ fun ConfigScreen(
             )
         }
 
+        if (showReportDialog.value) {
+            AlertDialog(
+                onDismissRequest = { showReportDialog.value = false },
+                confirmButton = {
+                    OutlinedButton(onClick = { showReportDialog.value = false }) {
+                        Text(stringResource(R.string.close))
+                    }
+                },
+                title = { Text(reportDialogTitle.value) },
+                text = { Text(reportDialogMessage.value) }
+            )
+        }
+
+        if (showShareFormatDialog.value) {
+            AlertDialog(
+                onDismissRequest = { showShareFormatDialog.value = false },
+                confirmButton = {},
+                dismissButton = {
+                    OutlinedButton(onClick = { showShareFormatDialog.value = false }) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                },
+                title = { Text(stringResource(R.string.share_duplicate_report)) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = {
+                                showShareFormatDialog.value = false
+                                shareDuplicateReport(DuplicateReportFormat.Text)
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(stringResource(R.string.share_duplicate_report_txt))
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                showShareFormatDialog.value = false
+                                shareDuplicateReport(DuplicateReportFormat.Csv)
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(stringResource(R.string.share_duplicate_report_csv))
+                        }
+                    }
+                }
+            )
+        }
+
         if (showConnectionDialog.value) {
             AlertDialog(
                 onDismissRequest = { showConnectionDialog.value = false },
@@ -849,6 +1347,7 @@ fun LibraryScreen(
     onSortModeSelected: (LibrarySortMode) -> Unit,
     onFavoriteFilterToggled: () -> Unit,
     onDuplicateFilterToggled: () -> Unit,
+    onDuplicateMatchModeSelected: (DuplicateMatchMode) -> Unit,
     onMovieFavoriteToggled: (String, Boolean) -> Unit,
     onSeriesFavoriteToggled: (String, Boolean) -> Unit,
     onMarkNovedadesAsSeen: (Long?) -> Unit,
@@ -921,6 +1420,12 @@ fun LibraryScreen(
         LibraryTab.Others -> false
     }
 
+    val activeDuplicateMatchMode = when (library.selectedTab) {
+        LibraryTab.Movies -> library.movieDuplicateMatchMode
+        LibraryTab.Series -> library.seriesDuplicateMatchMode
+        LibraryTab.Others -> DuplicateMatchMode.Strict
+    }
+
     val genreFilteredMovies = if (library.selectedMovieGenres.isEmpty()) {
         movies
     } else {
@@ -989,22 +1494,13 @@ fun LibraryScreen(
 
     val duplicateFilteredMovies = if (library.showOnlyMovieDuplicates) {
         val duplicateTitleKeys = favoriteFilteredMovies
-            .groupingBy {
-                MovieDuplicateKey(
-                    normalizedTitle = normalizeDuplicateTitle(it.title),
-                    productionYear = it.productionYear,
-                    durationMinutes = it.durationMinutes
-                )
-            }
+            .mapNotNull { movieDuplicateKey(it, library.movieDuplicateMatchMode) }
+            .groupingBy { it }
             .eachCount()
-            .filter { (key, count) -> key.normalizedTitle.isNotBlank() && count > 1 }
+            .filter { (_, count) -> count > 1 }
             .keys
-        favoriteFilteredMovies.filter {
-            MovieDuplicateKey(
-                normalizedTitle = normalizeDuplicateTitle(it.title),
-                productionYear = it.productionYear,
-                durationMinutes = it.durationMinutes
-            ) in duplicateTitleKeys
+        favoriteFilteredMovies.filter { movie ->
+            movieDuplicateKey(movie, library.movieDuplicateMatchMode) in duplicateTitleKeys
         }
     } else {
         favoriteFilteredMovies
@@ -1012,24 +1508,13 @@ fun LibraryScreen(
 
     val duplicateFilteredSeries = if (library.showOnlySeriesDuplicates) {
         val duplicateTitleKeys = favoriteFilteredSeries
-            .groupingBy {
-                SeriesDuplicateKey(
-                    normalizedTitle = normalizeDuplicateTitle(it.title),
-                    productionYear = it.productionYear,
-                    totalSeasons = it.totalSeasons,
-                    totalEpisodes = it.totalEpisodes
-                )
-            }
+            .mapNotNull { seriesDuplicateKey(it, library.seriesDuplicateMatchMode) }
+            .groupingBy { it }
             .eachCount()
-            .filter { (key, count) -> key.normalizedTitle.isNotBlank() && count > 1 }
+            .filter { (_, count) -> count > 1 }
             .keys
-        favoriteFilteredSeries.filter {
-            SeriesDuplicateKey(
-                normalizedTitle = normalizeDuplicateTitle(it.title),
-                productionYear = it.productionYear,
-                totalSeasons = it.totalSeasons,
-                totalEpisodes = it.totalEpisodes
-            ) in duplicateTitleKeys
+        favoriteFilteredSeries.filter { item ->
+            seriesDuplicateKey(item, library.seriesDuplicateMatchMode) in duplicateTitleKeys
         }
     } else {
         favoriteFilteredSeries
@@ -1532,6 +2017,7 @@ fun LibraryScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
                     .padding(horizontal = 16.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -1580,6 +2066,52 @@ fun LibraryScreen(
                     label = {
                         Text(
                             text = stringResource(R.string.duplicates),
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                )
+            }
+        }
+
+        if (!isAdvancedOverview && library.selectedTab != LibraryTab.Others && activeDuplicateOnly) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = stringResource(R.string.duplicate_match_label),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                FilterChip(
+                    selected = activeDuplicateMatchMode == DuplicateMatchMode.Flexible,
+                    onClick = { onDuplicateMatchModeSelected(DuplicateMatchMode.Flexible) },
+                    label = {
+                        Text(
+                            text = stringResource(R.string.duplicate_mode_flexible),
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                )
+                FilterChip(
+                    selected = activeDuplicateMatchMode == DuplicateMatchMode.Balanced,
+                    onClick = { onDuplicateMatchModeSelected(DuplicateMatchMode.Balanced) },
+                    label = {
+                        Text(
+                            text = stringResource(R.string.duplicate_mode_balanced),
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                )
+                FilterChip(
+                    selected = activeDuplicateMatchMode == DuplicateMatchMode.Strict,
+                    onClick = { onDuplicateMatchModeSelected(DuplicateMatchMode.Strict) },
+                    label = {
+                        Text(
+                            text = stringResource(R.string.duplicate_mode_strict),
                             style = MaterialTheme.typography.labelSmall
                         )
                     }

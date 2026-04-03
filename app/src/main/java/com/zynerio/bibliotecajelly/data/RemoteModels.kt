@@ -25,6 +25,10 @@ data class ItemsResponse(
     val Items: List<BaseItemDto>?
 )
 
+data class PublicSystemInfoResponse(
+    val Version: String?
+)
+
 data class BaseItemDto(
     val Id: String,
     val Name: String,
@@ -68,10 +72,16 @@ interface JellyfinApi {
     @GET("System/Ping")
     suspend fun pingServer(): String
 
+    @GET("System/Info/Public")
+    suspend fun getPublicSystemInfo(): PublicSystemInfoResponse
+
     @POST("Users/AuthenticateByName")
     suspend fun authenticateByName(
         @Body body: AuthenticationRequest
     ): AuthenticationResult
+
+    @GET("Users/Me")
+    suspend fun getCurrentUser(): AuthUser
 
     @GET("Users/{userId}/Items")
     suspend fun getItems(

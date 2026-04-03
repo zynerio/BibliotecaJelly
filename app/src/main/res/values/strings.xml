@@ -33,11 +33,36 @@
     <string name="download_posters_offline">Download posters for offline use</string>
     <string name="show_file_path_details">Show file path in details</string>
     <string name="advanced_libraries_view">Advanced libraries view</string>
+    <string name="reconcile_deleted_recent_sync">Reconcile deleted items in Recently added sync</string>
+    <string name="reconcile_deleted_recent_sync_hint">Runs an extra lightweight catalog pass to remove local items deleted on server. It is slower than normal Recently added.</string>
     <string name="libraries_label">Libraries</string>
     <string name="all_libraries">All libraries</string>
     <string name="library_unassigned">Unassigned</string>
 
     <string name="sync_history">Sync history</string>
+    <string name="export_duplicate_report">Export duplicate report</string>
+    <string name="export_duplicate_report_csv">Export duplicate report CSV</string>
+    <string name="share_duplicate_report">Share duplicate report</string>
+    <string name="share_duplicate_report_txt">Share TXT report</string>
+    <string name="share_duplicate_report_csv">Share CSV report</string>
+    <string name="duplicate_report_share_subject">Biblioteca Jelly duplicate report</string>
+    <string name="duplicate_report_export_title">Duplicate report exported</string>
+    <string name="duplicate_report_exporting">Exporting report...</string>
+    <string name="duplicate_report_export_success">Duplicate report saved to:%1$s</string>
+    <string name="duplicate_report_export_error">Could not export duplicate report.</string>
+    <string name="duplicate_report_saved_user_location">Duplicate report saved in the selected location.</string>
+    <string name="report_duplicate_modes_title">Report duplicate modes</string>
+    <string name="data_section_sync_title">Synchronization history</string>
+    <string name="data_section_sync_description">Check recent sync runs and their status.</string>
+    <string name="data_section_storage_title">Local storage</string>
+    <string name="data_section_storage_description">Database and downloaded posters usage on this device.</string>
+    <string name="storage_usage_chart_title">Storage usage comparison (of free app storage)</string>
+    <string name="storage_usage_db_label">Database: %.2f%%</string>
+    <string name="storage_usage_posters_label">Posters: %.2f%%</string>
+    <string name="data_section_reports_title">Duplicate reports</string>
+    <string name="data_section_reports_description">Configure duplicate matching and export/share reports.</string>
+    <string name="data_section_cleanup_title">Data cleanup</string>
+    <string name="data_section_cleanup_description">Danger zone: this action deletes locally synced items from the app.</string>
     <string name="cancel">Cancel</string>
     <string name="save">Save</string>
     <string name="validating">Validating...</string>
@@ -117,6 +142,8 @@
     <string name="timeout_validating_server">Connection timeout while validating server</string>
     <string name="timeout_validating_credentials">Connection timeout while validating credentials</string>
     <string name="test_connection_success">Connection successful with server</string>
+    <string name="server_version_connected">Connected server version: %1$s</string>
+    <string name="server_version_unknown">unknown</string>
 
     <string name="db_size_text">Database size: %1$s%2$s</string>
     <string name="posters_size_text">Local posters: %1$d files / %2$s</string>
@@ -164,6 +191,10 @@
     <string name="tech_quality">Quality</string>
     <string name="tech_format">Format</string>
     <string name="tech_resolution">Resolution</string>
+    <string name="duplicate_match_label">Match:</string>
+    <string name="duplicate_mode_flexible">Flexible</string>
+    <string name="duplicate_mode_balanced">Balanced</string>
+    <string name="duplicate_mode_strict">Strict</string>
     <string name="label_year">Year: %1$d</string>
     <string name="label_bitrate">Bitrate: %1$s</string>
     <string name="label_duration">Duration: %1$s</string>

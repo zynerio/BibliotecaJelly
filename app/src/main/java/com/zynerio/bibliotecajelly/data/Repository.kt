@@ -2,6 +2,7 @@ package com.zynerio.bibliotecajelly.data
 
 import android.content.Context
 import android.os.Build
+import android.os.Environment
 import android.util.Log
 import com.zynerio.bibliotecajelly.R
 import androidx.core.content.edit
@@ -102,6 +103,7 @@ class CredentialsStore(context: Context) {
     private val keyDismissedReleaseTag = "dismissed_release_tag"
     private val keyShowFilePath = "show_file_path"
     private val keyLibrariesAdvancedView = "libraries_advanced_view"
+    private val keyReconcileDeletedOnRecentSync = "reconcile_deleted_on_recent_sync"
     private val keyLibraryCoverOverrides = "library_cover_overrides"
     private val keyLibraryCoverHintDismissed = "library_cover_hint_dismissed"
 
@@ -301,6 +303,15 @@ class CredentialsStore(context: Context) {
         }
     }
 
+    fun getReconcileDeletedOnRecentSync(): Boolean =
+        prefs.getBoolean(keyReconcileDeletedOnRecentSync, false)
+
+    fun setReconcileDeletedOnRecentSync(enabled: Boolean) {
+        prefs.edit {
+            putBoolean(keyReconcileDeletedOnRecentSync, enabled)
+        }
+    }
+
     fun getLibraryCoverOverrides(): Map<String, String> {
         val raw = prefs.getString(keyLibraryCoverOverrides, null).orEmpty()
         if (raw.isBlank()) return emptyMap()
@@ -398,6 +409,11 @@ enum class SyncProgressPhase {
     SeriesDetails
 }
 
+enum class DuplicateReportFormat {
+    Text,
+    Csv
+}
+
 interface JellyfinRepository {
     val movies: Flow<List<MovieEntity>>
     val series: Flow<List<SeriesEntity>>
@@ -432,14 +448,24 @@ interface JellyfinRepository {
     suspend fun setLibraryCoverHintDismissed(dismissed: Boolean)
 
     suspend fun authenticateAndValidateConnection(): ConnectionResult
+    suspend fun authenticateAndValidateConnection(
+        serverAddress: String,
+        port: String,
+        username: String?,
+        password: String?,
+        apiKey: String?
+    ): ConnectionResult
     suspend fun checkServerStatus(): ConnectionResult
     suspend fun checkServerStatus(serverAddress: String, port: String): ConnectionResult
+    suspend fun getServerVersion(): String?
+    suspend fun getServerVersion(serverAddress: String, port: String): String?
 
     suspend fun syncIncremental(
         scope: SyncScope = SyncScope.All,
         forceFullMovies: Boolean = false,
         forceFullSeries: Boolean = false,
         forceFullOthers: Boolean = false,
+        reconcileDeletedOnRecent: Boolean = false,
         modeLabel: String = "Normal",
         onProgress: (processed: Int, total: Int, phase: SyncProgressPhase) -> Unit
     ): SyncResult
@@ -478,9 +504,16 @@ interface JellyfinRepository {
     suspend fun setOfflinePostersEnabled(enabled: Boolean)
     suspend fun getLibrariesAdvancedView(): Boolean
     suspend fun setLibrariesAdvancedView(enabled: Boolean)
+    suspend fun getReconcileDeletedOnRecentSync(): Boolean
+    suspend fun setReconcileDeletedOnRecentSync(enabled: Boolean)
     suspend fun getLatestAppRelease(): AppUpdateInfo?
     suspend fun getDismissedReleaseTag(): String?
     suspend fun setDismissedReleaseTag(tag: String?)
+    suspend fun exportDuplicateReport(
+        format: DuplicateReportFormat,
+        movieModeName: String,
+        seriesModeName: String
+    ): File?
 
     suspend fun clearLocalData(scope: ClearDataScope = ClearDataScope.All)
 
@@ -590,6 +623,37 @@ class DefaultJellyfinRepository(
             cachedBaseUrl = baseUrl
             return api
         }
+    }
+
+    private fun createTempApi(baseUrl: String, authToken: String? = null): JellyfinApi {
+        val clientBuilder = OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(120, TimeUnit.SECONDS)
+            .writeTimeout(120, TimeUnit.SECONDS)
+
+        clientBuilder.addInterceptor { chain ->
+            val original = chain.request()
+            val builder = original.newBuilder()
+            val appName = "BibliotecaJelly"
+            val deviceName = Build.MODEL.takeIf { it.isNotBlank() } ?: "AndroidDevice"
+            val deviceId = deviceName
+            val embyAuth =
+                """MediaBrowser Client=\"$appName\", Device=\"$deviceName\", DeviceId=\"$deviceId\", Version=\"$appVersionName\""""
+            builder.addHeader("X-Emby-Authorization", embyAuth)
+            if (!authToken.isNullOrBlank()) {
+                builder.addHeader("X-Emby-Token", authToken)
+            }
+            chain.proceed(builder.build())
+        }
+
+        val client = clientBuilder.build()
+
+        return Retrofit.Builder()
+            .baseUrl(baseUrl)
+            .client(client)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(JellyfinApi::class.java)
     }
 
     override val movies: Flow<List<MovieEntity>> = db.movieDao().getAllMovies()
@@ -801,6 +865,13 @@ class DefaultJellyfinRepository(
         credentialsStore.setLibrariesAdvancedView(enabled)
     }
 
+    override suspend fun getReconcileDeletedOnRecentSync(): Boolean =
+        credentialsStore.getReconcileDeletedOnRecentSync()
+
+    override suspend fun setReconcileDeletedOnRecentSync(enabled: Boolean) {
+        credentialsStore.setReconcileDeletedOnRecentSync(enabled)
+    }
+
     override suspend fun getLatestAppRelease(): AppUpdateInfo? {
         return withContext(Dispatchers.IO) {
             runCatching {
@@ -867,6 +938,63 @@ class DefaultJellyfinRepository(
 
     override suspend fun setDismissedReleaseTag(tag: String?) {
         credentialsStore.setDismissedReleaseTag(tag)
+    }
+
+    override suspend fun exportDuplicateReport(
+        format: DuplicateReportFormat,
+        movieModeName: String,
+        seriesModeName: String
+    ): File? {
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val movies = db.movieDao().getAllMoviesSnapshot()
+                val series = db.seriesDao().getAllSeriesSnapshot()
+                val movieMode = parseDuplicateMatchMode(movieModeName)
+                val seriesMode = parseDuplicateMatchMode(seriesModeName)
+                val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
+                    .format(Date())
+                val outputDir = appContext.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
+                    ?: File(appContext.filesDir, "reports")
+                if (!outputDir.exists()) {
+                    outputDir.mkdirs()
+                }
+
+                val extension = if (format == DuplicateReportFormat.Csv) "csv" else "txt"
+                val reportFile = File(outputDir, "duplicate_report_$timestamp.$extension")
+                val generatedAt = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault())
+                    .format(Date())
+
+                val movieGroups = movies
+                    .groupBy { movieReportKey(it, movieMode) }
+                    .filter { (key, items) -> key.isNotBlank() && items.size > 1 }
+                    .toSortedMap()
+                val seriesGroups = series
+                    .groupBy { seriesReportKey(it, seriesMode) }
+                    .filter { (key, items) -> key.isNotBlank() && items.size > 1 }
+                    .toSortedMap()
+
+                val content = when (format) {
+                    DuplicateReportFormat.Text -> buildDuplicateTextReport(
+                        generatedAt = generatedAt,
+                        movieMode = movieMode,
+                        seriesMode = seriesMode,
+                        movieGroups = movieGroups,
+                        seriesGroups = seriesGroups
+                    )
+
+                    DuplicateReportFormat.Csv -> buildDuplicateCsvReport(
+                        generatedAt = generatedAt,
+                        movieMode = movieMode,
+                        seriesMode = seriesMode,
+                        movieGroups = movieGroups,
+                        seriesGroups = seriesGroups
+                    )
+                }
+
+                reportFile.writeText(content)
+                reportFile
+            }.getOrNull()
+        }
     }
 
     override suspend fun clearLocalData(scope: ClearDataScope) {
@@ -1205,6 +1333,59 @@ class DefaultJellyfinRepository(
         }
     }
 
+    override suspend fun authenticateAndValidateConnection(
+        serverAddress: String,
+        port: String,
+        username: String?,
+        password: String?,
+        apiKey: String?
+    ): ConnectionResult {
+        return withContext(Dispatchers.IO) {
+            if (serverAddress.trim().isBlank()) {
+                return@withContext ConnectionResult.AuthFailure(appContext.getString(R.string.error_server_config_incomplete))
+            }
+
+            val baseUrl = buildNormalizedBaseUrl(serverAddress, port)
+
+            try {
+                val trimmedApiKey = apiKey?.trim().orEmpty()
+                if (trimmedApiKey.isNotBlank()) {
+                    createTempApi(baseUrl, trimmedApiKey).getCurrentUser()
+                    return@withContext ConnectionResult.Success
+                }
+
+                val trimmedUsername = username?.trim()
+                if (trimmedUsername.isNullOrBlank()) {
+                    return@withContext ConnectionResult.AuthFailure(appContext.getString(R.string.error_username_required))
+                }
+
+                createTempApi(baseUrl).authenticateByName(
+                    AuthenticationRequest(
+                        Username = trimmedUsername,
+                        Pw = password.orEmpty()
+                    )
+                )
+                ConnectionResult.Success
+            } catch (e: retrofit2.HttpException) {
+                if (e.code() == 401 || e.code() == 403) {
+                    ConnectionResult.AuthFailure(appContext.getString(R.string.error_auth_401_user_pass))
+                } else {
+                    ConnectionResult.NetworkError(httpDiagnosticMessage(e))
+                }
+            } catch (e: java.net.SocketTimeoutException) {
+                ConnectionResult.NetworkError(networkDiagnosticMessage(e))
+            } catch (e: java.net.UnknownHostException) {
+                ConnectionResult.NetworkError(networkDiagnosticMessage(e))
+            } catch (e: java.net.ConnectException) {
+                ConnectionResult.NetworkError(networkDiagnosticMessage(e))
+            } catch (e: javax.net.ssl.SSLException) {
+                ConnectionResult.NetworkError(networkDiagnosticMessage(e))
+            } catch (e: Exception) {
+                ConnectionResult.UnknownError(networkDiagnosticMessage(e))
+            }
+        }
+    }
+
     override suspend fun checkServerStatus(): ConnectionResult {
         return withContext(Dispatchers.IO) {
             val config = credentialsStore.getServerConfig()
@@ -1242,18 +1423,7 @@ class DefaultJellyfinRepository(
             }
 
             try {
-                val client = OkHttpClient.Builder()
-                    .connectTimeout(30, TimeUnit.SECONDS)
-                    .readTimeout(120, TimeUnit.SECONDS)
-                    .writeTimeout(120, TimeUnit.SECONDS)
-                    .build()
-
-                val tempApi = Retrofit.Builder()
-                    .baseUrl(baseUrl)
-                    .client(client)
-                    .addConverterFactory(GsonConverterFactory.create())
-                    .build()
-                    .create(JellyfinApi::class.java)
+                val tempApi = createTempApi(baseUrl)
 
                 tempApi.pingServer()
                 ConnectionResult.Success
@@ -1270,6 +1440,30 @@ class DefaultJellyfinRepository(
             } catch (e: Exception) {
                 ConnectionResult.UnknownError(networkDiagnosticMessage(e))
             }
+        }
+    }
+
+    override suspend fun getServerVersion(): String? {
+        return withContext(Dispatchers.IO) {
+            val config = credentialsStore.getServerConfig() ?: return@withContext null
+            if (config.baseUrl.isBlank()) return@withContext null
+
+            runCatching {
+                getApi().getPublicSystemInfo().Version?.trim()?.takeIf { it.isNotBlank() }
+            }.getOrNull()
+        }
+    }
+
+    override suspend fun getServerVersion(serverAddress: String, port: String): String? {
+        return withContext(Dispatchers.IO) {
+            if (serverAddress.trim().isBlank()) return@withContext null
+            val baseUrl = buildNormalizedBaseUrl(serverAddress, port)
+
+            runCatching {
+                createTempApi(baseUrl).getPublicSystemInfo().Version
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+            }.getOrNull()
         }
     }
 
@@ -1555,6 +1749,7 @@ class DefaultJellyfinRepository(
         forceFullMovies: Boolean,
         forceFullSeries: Boolean,
         forceFullOthers: Boolean,
+        reconcileDeletedOnRecent: Boolean,
         modeLabel: String,
         onProgress: (processed: Int, total: Int, phase: SyncProgressPhase) -> Unit
     ): SyncResult {
@@ -1598,6 +1793,9 @@ class DefaultJellyfinRepository(
                 val movieMinDate = if (syncMovies && (forceFullMovies || hasUnassignedMovies)) null else lastSyncIso
                 val seriesMinDate = if (syncSeries && (forceFullSeries || hasUnassignedSeries)) null else lastSyncIso
                 val otherMinDate = if (syncOthers && (forceFullOthers || hasUnassignedOthers)) null else lastSyncIso
+                val reconcileMoviesMissing = syncMovies && (movieMinDate == null || reconcileDeletedOnRecent)
+                val reconcileSeriesMissing = syncSeries && (seriesMinDate == null || reconcileDeletedOnRecent)
+                val reconcileOthersMissing = syncOthers && (otherMinDate == null || reconcileDeletedOnRecent)
 
                 var processed = 0
                 var total: Int
@@ -1732,6 +1930,13 @@ class DefaultJellyfinRepository(
                     }
 
                     Log.d("JellyfinSync", "Movies fetched and saved: $totalMovies")
+
+                    if (reconcileMoviesMissing) {
+                        reconcileMoviesCatalogMissing(
+                            userId = userId ?: "",
+                            librariesById = librariesById
+                        )
+                    }
                 }
 
                 if (syncSeries) {
@@ -1804,6 +2009,13 @@ class DefaultJellyfinRepository(
                     totalSeriesDetails = refreshSeriesDetailsBatch(seriesIdsToRefresh, onProgress)
 
                     Log.d("JellyfinSync", "Series fetched and saved: $totalSeriesItems")
+
+                    if (reconcileSeriesMissing) {
+                        reconcileSeriesCatalogMissing(
+                            userId = userId ?: "",
+                            librariesById = librariesById
+                        )
+                    }
                 }
 
                 if (syncOthers) {
@@ -1811,7 +2023,7 @@ class DefaultJellyfinRepository(
                         userId = userId ?: "",
                         minDateLastSaved = otherMinDate,
                         librariesById = librariesById,
-                        reconcileMissing = otherMinDate == null
+                        reconcileMissing = reconcileOthersMissing
                     )
                     Log.d("JellyfinSync", "Other media fetched and saved: $totalOthers")
                 }
@@ -2090,6 +2302,441 @@ class DefaultJellyfinRepository(
     private fun BaseItemDto.buildPrimaryImageUrl(baseUrl: String): String? {
         val tag = ImageTags?.get("Primary") ?: return null
         return "${baseUrl.trimEnd('/')}/Items/$Id/Images/Primary?tag=$tag"
+    }
+
+    private fun normalizeDuplicateTitle(rawTitle: String): String =
+        rawTitle.trim().lowercase().replace(Regex("\\s+"), " ")
+
+    private fun parseDuplicateMatchMode(modeName: String): String {
+        return when (modeName.uppercase(Locale.ROOT)) {
+            "FLEXIBLE" -> "FLEXIBLE"
+            "BALANCED" -> "BALANCED"
+            else -> "STRICT"
+        }
+    }
+
+    private fun movieReportKey(movie: MovieEntity, mode: String): String {
+        val normalized = normalizeDuplicateTitle(movie.title)
+        if (normalized.isBlank()) return ""
+        return when (mode) {
+            "FLEXIBLE" -> normalized
+            "BALANCED" -> "$normalized|${movie.productionYear ?: -1}"
+            else -> "$normalized|${movie.productionYear ?: -1}|${movie.durationMinutes ?: -1}"
+        }
+    }
+
+    private fun seriesReportKey(item: SeriesEntity, mode: String): String {
+        val normalized = normalizeDuplicateTitle(item.title)
+        if (normalized.isBlank()) return ""
+        return when (mode) {
+            "FLEXIBLE" -> normalized
+            "BALANCED" -> "$normalized|${item.productionYear ?: -1}"
+            else -> "$normalized|${item.productionYear ?: -1}|${item.totalSeasons}|${item.totalEpisodes}"
+        }
+    }
+
+    private fun buildDuplicateTextReport(
+        generatedAt: String,
+        movieMode: String,
+        seriesMode: String,
+        movieGroups: Map<String, List<MovieEntity>>,
+        seriesGroups: Map<String, List<SeriesEntity>>
+    ): String {
+        val totalMovieEntries = movieGroups.values.sumOf { it.size }
+        val totalSeriesEntries = seriesGroups.values.sumOf { it.size }
+        return buildString {
+            appendLine("Biblioteca Jelly - Informe de duplicados")
+            appendLine("Generado: $generatedAt")
+            appendLine("Modo peliculas: $movieMode")
+            appendLine("Modo series: $seriesMode")
+            appendLine()
+            appendLine("RESUMEN")
+            appendLine("Grupos duplicados peliculas: ${movieGroups.size}")
+            appendLine("Entradas duplicadas peliculas: $totalMovieEntries")
+            appendLine("Grupos duplicados series: ${seriesGroups.size}")
+            appendLine("Entradas duplicadas series: $totalSeriesEntries")
+            appendLine()
+            appendLine("PELICULAS")
+            appendLine("Grupos duplicados: ${movieGroups.size}")
+            appendLine()
+
+            if (movieGroups.isEmpty()) {
+                appendLine("Sin duplicados detectados.")
+            } else {
+                movieGroups.forEach { (_, items) ->
+                    appendLine(items.first().title)
+                    items.sortedWith(
+                        compareBy<MovieEntity> { it.productionYear ?: Int.MIN_VALUE }
+                            .thenBy { it.durationMinutes ?: Int.MIN_VALUE }
+                            .thenBy { it.filePath.orEmpty() }
+                    ).forEach { item ->
+                        val yearText = item.productionYear?.toString() ?: "-"
+                        val durationText = item.durationMinutes?.toString() ?: "-"
+                        val pathText = item.filePath ?: "ruta no disponible"
+                        appendLine("- año=$yearText | duracion=$durationText | ruta=$pathText")
+                    }
+                    appendLine()
+                }
+            }
+
+            appendLine("SERIES")
+            appendLine("Grupos duplicados: ${seriesGroups.size}")
+            appendLine()
+
+            if (seriesGroups.isEmpty()) {
+                appendLine("Sin duplicados detectados.")
+            } else {
+                seriesGroups.forEach { (_, items) ->
+                    appendLine(items.first().title)
+                    items.sortedWith(
+                        compareBy<SeriesEntity> { it.productionYear ?: Int.MIN_VALUE }
+                            .thenBy { it.totalSeasons }
+                            .thenBy { it.totalEpisodes }
+                            .thenBy { it.filePath.orEmpty() }
+                    ).forEach { item ->
+                        val yearText = item.productionYear?.toString() ?: "-"
+                        val pathText = item.filePath ?: "ruta no disponible"
+                        appendLine(
+                            "- año=$yearText | temporadas=${item.totalSeasons} | episodios=${item.totalEpisodes} | ruta=$pathText"
+                        )
+                    }
+                    appendLine()
+                }
+            }
+        }
+    }
+
+    private fun buildDuplicateCsvReport(
+        generatedAt: String,
+        movieMode: String,
+        seriesMode: String,
+        movieGroups: Map<String, List<MovieEntity>>,
+        seriesGroups: Map<String, List<SeriesEntity>>
+    ): String {
+        fun csv(value: String): String = "\"${value.replace("\"", "\"\"")}\""
+
+        val totalMovieEntries = movieGroups.values.sumOf { it.size }
+        val totalSeriesEntries = seriesGroups.values.sumOf { it.size }
+
+        return buildString {
+            appendLine(csv("generated_at") + "," + csv(generatedAt))
+            appendLine(csv("movie_mode") + "," + csv(movieMode))
+            appendLine(csv("series_mode") + "," + csv(seriesMode))
+            appendLine(csv("movie_duplicate_groups") + "," + csv(movieGroups.size.toString()))
+            appendLine(csv("movie_duplicate_entries") + "," + csv(totalMovieEntries.toString()))
+            appendLine(csv("series_duplicate_groups") + "," + csv(seriesGroups.size.toString()))
+            appendLine(csv("series_duplicate_entries") + "," + csv(totalSeriesEntries.toString()))
+            appendLine(
+                listOf(
+                    "media_type",
+                    "group_name",
+                    "title",
+                    "year",
+                    "duration_minutes",
+                    "total_seasons",
+                    "total_episodes",
+                    "file_path"
+                ).joinToString(",") { csv(it) }
+            )
+
+            movieGroups.forEach { (_, items) ->
+                items.sortedWith(
+                    compareBy<MovieEntity> { it.productionYear ?: Int.MIN_VALUE }
+                        .thenBy { it.durationMinutes ?: Int.MIN_VALUE }
+                        .thenBy { it.filePath.orEmpty() }
+                ).forEach { item ->
+                    appendLine(
+                        listOf(
+                            "movie",
+                            item.title,
+                            item.title,
+                            item.productionYear?.toString() ?: "",
+                            item.durationMinutes?.toString() ?: "",
+                            "",
+                            "",
+                            item.filePath.orEmpty()
+                        ).joinToString(",") { csv(it) }
+                    )
+                }
+            }
+
+            seriesGroups.forEach { (_, items) ->
+                items.sortedWith(
+                    compareBy<SeriesEntity> { it.productionYear ?: Int.MIN_VALUE }
+                        .thenBy { it.totalSeasons }
+                        .thenBy { it.totalEpisodes }
+                        .thenBy { it.filePath.orEmpty() }
+                ).forEach { item ->
+                    appendLine(
+                        listOf(
+                            "series",
+                            item.title,
+                            item.title,
+                            item.productionYear?.toString() ?: "",
+                            "",
+                            item.totalSeasons.toString(),
+                            item.totalEpisodes.toString(),
+                            item.filePath.orEmpty()
+                        ).joinToString(",") { csv(it) }
+                    )
+                }
+            }
+        }
+    }
+
+    private fun movieReplacementSignature(movie: MovieEntity): String? {
+        val normalizedTitle = normalizeDuplicateTitle(movie.title)
+        if (normalizedTitle.isBlank()) return null
+        return "$normalizedTitle|${movie.productionYear ?: -1}|${movie.durationMinutes ?: -1}"
+    }
+
+    private fun seriesReplacementSignature(item: SeriesEntity): String? {
+        val normalizedTitle = normalizeDuplicateTitle(item.title)
+        if (normalizedTitle.isBlank()) return null
+        return "$normalizedTitle|${item.productionYear ?: -1}|${item.totalSeasons}|${item.totalEpisodes}"
+    }
+
+    private suspend fun fetchSeenIdsByLibrary(
+        userId: String,
+        includeItemTypes: String,
+        librariesById: Map<String, String>
+    ): Pair<Map<String, Set<String>>, Set<String>> {
+        val fetchSources: List<Pair<String?, String?>> =
+            if (librariesById.isNotEmpty()) librariesById.map { it.key to it.value }
+            else listOf(null to null)
+
+        val seenIdsByLibrary = linkedMapOf<String, MutableSet<String>>()
+        val seenIdsWithoutLibrary = linkedSetOf<String>()
+
+        for ((libId, _) in fetchSources) {
+            var startIndex = 0
+            val pageSize = 500
+            while (true) {
+                val response = getApi().getItems(
+                    userId = userId,
+                    includeItemTypes = includeItemTypes,
+                    minDateLastSaved = null,
+                    startIndex = startIndex,
+                    limit = pageSize,
+                    parentId = libId
+                )
+                val items = response.Items.orEmpty()
+                if (items.isEmpty()) break
+
+                if (libId.isNullOrBlank()) {
+                    items.forEach { seenIdsWithoutLibrary.add(it.Id) }
+                } else {
+                    val keep = seenIdsByLibrary.getOrPut(libId) { linkedSetOf() }
+                    items.forEach { keep.add(it.Id) }
+                }
+
+                if (items.size < pageSize) break
+                startIndex += items.size
+            }
+        }
+
+        return seenIdsByLibrary.mapValues { it.value.toSet() } to seenIdsWithoutLibrary.toSet()
+    }
+
+    private suspend fun reconcileMoviesCatalogMissing(
+        userId: String,
+        librariesById: Map<String, String>
+    ) {
+        val (seenIdsByLibrary, seenIdsWithoutLibrary) = fetchSeenIdsByLibrary(
+            userId = userId,
+            includeItemTypes = "Movie",
+            librariesById = librariesById
+        )
+
+        val fetchSources: List<Pair<String?, String?>> =
+            if (librariesById.isNotEmpty()) librariesById.map { it.key to it.value }
+            else listOf(null to null)
+
+        for ((libId, _) in fetchSources) {
+            val localItems = if (libId.isNullOrBlank()) {
+                db.movieDao().getWithoutLibraryId()
+            } else {
+                db.movieDao().getByLibraryId(libId)
+            }
+
+            val keepIds = if (libId.isNullOrBlank()) {
+                seenIdsWithoutLibrary
+            } else {
+                seenIdsByLibrary[libId].orEmpty()
+            }
+
+            val toDelete = localItems.filter { it.id !in keepIds }
+            val kept = localItems.filter { it.id in keepIds }
+
+            if (toDelete.isNotEmpty() && kept.isNotEmpty()) {
+                val availableTargetsBySignature = kept
+                    .filter { !it.isFavorite }
+                    .groupBy { movieReplacementSignature(it) }
+                    .toMutableMap()
+
+                toDelete
+                    .asSequence()
+                    .filter { it.isFavorite }
+                    .forEach { oldFavorite ->
+                        val signature = movieReplacementSignature(oldFavorite) ?: return@forEach
+                        val candidates = availableTargetsBySignature[signature].orEmpty()
+                        val target = candidates.firstOrNull() ?: return@forEach
+                        db.movieDao().setFavorite(target.id, true)
+                        val remaining = candidates.drop(1)
+                        if (remaining.isEmpty()) {
+                            availableTargetsBySignature.remove(signature)
+                        } else {
+                            availableTargetsBySignature[signature] = remaining
+                        }
+                    }
+            }
+
+            if (libId.isNullOrBlank()) {
+                if (keepIds.isEmpty()) {
+                    db.movieDao().clearWithoutLibraryId()
+                } else {
+                    db.movieDao().deleteWithoutLibraryIdNotIn(keepIds.toList())
+                }
+            } else {
+                if (keepIds.isEmpty()) {
+                    db.movieDao().clearByLibraryId(libId)
+                } else {
+                    db.movieDao().deleteByLibraryIdNotIn(libId, keepIds.toList())
+                }
+            }
+        }
+    }
+
+    private suspend fun reconcileSeriesCatalogMissing(
+        userId: String,
+        librariesById: Map<String, String>
+    ) {
+        val (seenIdsByLibrary, seenIdsWithoutLibrary) = fetchSeenIdsByLibrary(
+            userId = userId,
+            includeItemTypes = "Series",
+            librariesById = librariesById
+        )
+
+        val fetchSources: List<Pair<String?, String?>> =
+            if (librariesById.isNotEmpty()) librariesById.map { it.key to it.value }
+            else listOf(null to null)
+
+        for ((libId, _) in fetchSources) {
+            val localItems = if (libId.isNullOrBlank()) {
+                db.seriesDao().getWithoutLibraryId()
+            } else {
+                db.seriesDao().getByLibraryId(libId)
+            }
+
+            val keepIds = if (libId.isNullOrBlank()) {
+                seenIdsWithoutLibrary
+            } else {
+                seenIdsByLibrary[libId].orEmpty()
+            }
+
+            val toDelete = localItems.filter { it.id !in keepIds }
+            val kept = localItems.filter { it.id in keepIds }
+
+            if (toDelete.isNotEmpty() && kept.isNotEmpty()) {
+                val availableTargetsBySignature = kept
+                    .filter { !it.isFavorite }
+                    .groupBy { seriesReplacementSignature(it) }
+                    .toMutableMap()
+
+                toDelete
+                    .asSequence()
+                    .filter { it.isFavorite }
+                    .forEach { oldFavorite ->
+                        val signature = seriesReplacementSignature(oldFavorite) ?: return@forEach
+                        val candidates = availableTargetsBySignature[signature].orEmpty()
+                        val target = candidates.firstOrNull() ?: return@forEach
+                        db.seriesDao().setFavorite(target.id, true)
+                        val remaining = candidates.drop(1)
+                        if (remaining.isEmpty()) {
+                            availableTargetsBySignature.remove(signature)
+                        } else {
+                            availableTargetsBySignature[signature] = remaining
+                        }
+                    }
+            }
+
+            if (libId.isNullOrBlank()) {
+                if (keepIds.isEmpty()) {
+                    db.seriesDao().clearWithoutLibraryId()
+                } else {
+                    db.seriesDao().deleteWithoutLibraryIdNotIn(keepIds.toList())
+                }
+            } else {
+                if (keepIds.isEmpty()) {
+                    db.seriesDao().clearByLibraryId(libId)
+                } else {
+                    db.seriesDao().deleteByLibraryIdNotIn(libId, keepIds.toList())
+                }
+            }
+        }
+    }
+
+    private suspend fun reconcileCatalogMissingByType(
+        userId: String,
+        includeItemTypes: String,
+        clearByLibrary: suspend (String) -> Unit,
+        clearWithoutLibrary: suspend () -> Unit,
+        deleteByLibraryNotIn: suspend (String, List<String>) -> Unit,
+        deleteWithoutLibraryNotIn: suspend (List<String>) -> Unit,
+        librariesById: Map<String, String>
+    ) {
+        val fetchSources: List<Pair<String?, String?>> =
+            if (librariesById.isNotEmpty()) librariesById.map { it.key to it.value }
+            else listOf(null to null)
+
+        val seenIdsByLibrary = linkedMapOf<String, MutableSet<String>>()
+        val seenIdsWithoutLibrary = linkedSetOf<String>()
+
+        for ((libId, _) in fetchSources) {
+            var startIndex = 0
+            val pageSize = 500
+            while (true) {
+                val response = getApi().getItems(
+                    userId = userId,
+                    includeItemTypes = includeItemTypes,
+                    minDateLastSaved = null,
+                    startIndex = startIndex,
+                    limit = pageSize,
+                    parentId = libId
+                )
+                val items = response.Items.orEmpty()
+                if (items.isEmpty()) break
+
+                if (libId.isNullOrBlank()) {
+                    items.forEach { seenIdsWithoutLibrary.add(it.Id) }
+                } else {
+                    val keep = seenIdsByLibrary.getOrPut(libId) { linkedSetOf() }
+                    items.forEach { keep.add(it.Id) }
+                }
+
+                if (items.size < pageSize) {
+                    break
+                }
+                startIndex += items.size
+            }
+        }
+
+        for ((libId, _) in fetchSources) {
+            if (libId.isNullOrBlank()) {
+                if (seenIdsWithoutLibrary.isEmpty()) {
+                    clearWithoutLibrary()
+                } else {
+                    deleteWithoutLibraryNotIn(seenIdsWithoutLibrary.toList())
+                }
+            } else {
+                val keepIds = seenIdsByLibrary[libId].orEmpty().toList()
+                if (keepIds.isEmpty()) {
+                    clearByLibrary(libId)
+                } else {
+                    deleteByLibraryNotIn(libId, keepIds)
+                }
+            }
+        }
     }
 
     private suspend fun syncOtherMediaCatalog(

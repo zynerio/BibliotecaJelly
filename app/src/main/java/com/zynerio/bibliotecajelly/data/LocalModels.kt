@@ -223,6 +223,9 @@ interface MovieDao {
     @Query("SELECT * FROM movies ORDER BY title")
     fun getAllMovies(): Flow<List<MovieEntity>>
 
+    @Query("SELECT * FROM movies ORDER BY title")
+    suspend fun getAllMoviesSnapshot(): List<MovieEntity>
+
     @Query("SELECT * FROM movies WHERE title LIKE '%' || :query || '%' ORDER BY title")
     fun searchMoviesByTitle(query: String): Flow<List<MovieEntity>>
 
@@ -235,6 +238,12 @@ interface MovieDao {
     @Query("SELECT COUNT(*) FROM movies WHERE library_id IS NULL")
     suspend fun countWithoutLibrary(): Int
 
+    @Query("SELECT * FROM movies WHERE library_id = :libraryId")
+    suspend fun getByLibraryId(libraryId: String): List<MovieEntity>
+
+    @Query("SELECT * FROM movies WHERE library_id IS NULL")
+    suspend fun getWithoutLibraryId(): List<MovieEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(movies: List<MovieEntity>)
 
@@ -243,12 +252,27 @@ interface MovieDao {
 
     @Query("DELETE FROM movies")
     suspend fun clearAll()
+
+    @Query("DELETE FROM movies WHERE library_id = :libraryId")
+    suspend fun clearByLibraryId(libraryId: String)
+
+    @Query("DELETE FROM movies WHERE library_id IS NULL")
+    suspend fun clearWithoutLibraryId()
+
+    @Query("DELETE FROM movies WHERE library_id = :libraryId AND id NOT IN (:keepIds)")
+    suspend fun deleteByLibraryIdNotIn(libraryId: String, keepIds: List<String>)
+
+    @Query("DELETE FROM movies WHERE library_id IS NULL AND id NOT IN (:keepIds)")
+    suspend fun deleteWithoutLibraryIdNotIn(keepIds: List<String>)
 }
 
 @Dao
 interface SeriesDao {
     @Query("SELECT * FROM series ORDER BY title")
     fun getAllSeries(): Flow<List<SeriesEntity>>
+
+    @Query("SELECT * FROM series ORDER BY title")
+    suspend fun getAllSeriesSnapshot(): List<SeriesEntity>
 
     @Query("SELECT * FROM series WHERE title LIKE '%' || :query || '%' ORDER BY title")
     fun searchSeriesByTitle(query: String): Flow<List<SeriesEntity>>
@@ -265,6 +289,12 @@ interface SeriesDao {
 
     @Query("SELECT COUNT(*) FROM series WHERE library_id IS NULL")
     suspend fun countWithoutLibrary(): Int
+
+    @Query("SELECT * FROM series WHERE library_id = :libraryId")
+    suspend fun getByLibraryId(libraryId: String): List<SeriesEntity>
+
+    @Query("SELECT * FROM series WHERE library_id IS NULL")
+    suspend fun getWithoutLibraryId(): List<SeriesEntity>
 
     @Upsert
     suspend fun upsertSeries(series: List<SeriesEntity>)
@@ -320,6 +350,18 @@ interface SeriesDao {
 
     @Query("DELETE FROM episodes")
     suspend fun clearEpisodes()
+
+    @Query("DELETE FROM series WHERE library_id = :libraryId")
+    suspend fun clearByLibraryId(libraryId: String)
+
+    @Query("DELETE FROM series WHERE library_id IS NULL")
+    suspend fun clearWithoutLibraryId()
+
+    @Query("DELETE FROM series WHERE library_id = :libraryId AND id NOT IN (:keepIds)")
+    suspend fun deleteByLibraryIdNotIn(libraryId: String, keepIds: List<String>)
+
+    @Query("DELETE FROM series WHERE library_id IS NULL AND id NOT IN (:keepIds)")
+    suspend fun deleteWithoutLibraryIdNotIn(keepIds: List<String>)
 }
 
 @Dao

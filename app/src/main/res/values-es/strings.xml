@@ -33,11 +33,36 @@
     <string name="download_posters_offline">Descargar portadas para uso sin conexión</string>
     <string name="show_file_path_details">Mostrar ruta del archivo en el detalle</string>
     <string name="advanced_libraries_view">Vista avanzada por bibliotecas</string>
+    <string name="reconcile_deleted_recent_sync">Reconciliar eliminados en sincronización de últimos añadidos</string>
+    <string name="reconcile_deleted_recent_sync_hint">Ejecuta una pasada adicional ligera de catálogo para limpiar elementos locales eliminados en servidor. Es más lenta que la sincronización normal de últimos añadidos.</string>
     <string name="libraries_label">Bibliotecas</string>
     <string name="all_libraries">Todas las bibliotecas</string>
     <string name="library_unassigned">Sin asignar</string>
 
     <string name="sync_history">Historial de sincronización</string>
+    <string name="export_duplicate_report">Exportar informe de duplicados</string>
+    <string name="export_duplicate_report_csv">Exportar informe de duplicados CSV</string>
+    <string name="share_duplicate_report">Compartir informe de duplicados</string>
+    <string name="share_duplicate_report_txt">Compartir informe TXT</string>
+    <string name="share_duplicate_report_csv">Compartir informe CSV</string>
+    <string name="duplicate_report_share_subject">Informe de duplicados de Biblioteca Jelly</string>
+    <string name="duplicate_report_export_title">Informe de duplicados exportado</string>
+    <string name="duplicate_report_exporting">Exportando informe...</string>
+    <string name="duplicate_report_export_success">Informe de duplicados guardado en:%1$s</string>
+    <string name="duplicate_report_export_error">No se pudo exportar el informe de duplicados.</string>
+    <string name="duplicate_report_saved_user_location">Informe de duplicados guardado en la ubicación seleccionada.</string>
+    <string name="report_duplicate_modes_title">Modos de duplicados para informe</string>
+    <string name="data_section_sync_title">Historial de sincronización</string>
+    <string name="data_section_sync_description">Consulta las últimas sincronizaciones y su estado.</string>
+    <string name="data_section_storage_title">Almacenamiento local</string>
+    <string name="data_section_storage_description">Uso de base de datos y portadas descargadas en este dispositivo.</string>
+    <string name="storage_usage_chart_title">Comparativa de uso (sobre espacio libre de la app)</string>
+    <string name="storage_usage_db_label">Base de datos: %.2f%%</string>
+    <string name="storage_usage_posters_label">Pósters: %.2f%%</string>
+    <string name="data_section_reports_title">Informes de duplicados</string>
+    <string name="data_section_reports_description">Configura el modo de coincidencia y exporta o comparte informes.</string>
+    <string name="data_section_cleanup_title">Limpieza de datos</string>
+    <string name="data_section_cleanup_description">Zona de riesgo: esta acción borra de la app los elementos sincronizados localmente.</string>
     <string name="cancel">Cancelar</string>
     <string name="save">Guardar</string>
     <string name="validating">Validando...</string>
@@ -117,6 +142,8 @@
     <string name="timeout_validating_server">Tiempo de conexión agotado al validar el servidor</string>
     <string name="timeout_validating_credentials">Tiempo de conexión agotado al validar credenciales</string>
     <string name="test_connection_success">Conexión correcta con el servidor</string>
+    <string name="server_version_connected">Versión del servidor conectado: %1$s</string>
+    <string name="server_version_unknown">desconocida</string>
 
     <string name="db_size_text">Tamaño base de datos: %1$s%2$s</string>
     <string name="posters_size_text">Portadas locales: %1$d archivos / %2$s</string>
@@ -164,6 +191,10 @@
     <string name="tech_quality">Calidad</string>
     <string name="tech_format">Formato</string>
     <string name="tech_resolution">Resolución</string>
+    <string name="duplicate_match_label">Coincidencia:</string>
+    <string name="duplicate_mode_flexible">Flexible</string>
+    <string name="duplicate_mode_balanced">Equilibrada</string>
+    <string name="duplicate_mode_strict">Estricta</string>
     <string name="label_year">Año: %1$d</string>
     <string name="label_bitrate">Bitrate: %1$s</string>
     <string name="label_duration">Duración: %1$s</string>

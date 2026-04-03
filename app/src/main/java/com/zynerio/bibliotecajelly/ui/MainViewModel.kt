@@ -18,6 +18,7 @@ import com.zynerio.bibliotecajelly.data.MovieDetailsSyncMode
 import com.zynerio.bibliotecajelly.data.ListDisplayMode
 import com.zynerio.bibliotecajelly.data.LibrarySortMode
 import com.zynerio.bibliotecajelly.data.ClearDataScope
+import com.zynerio.bibliotecajelly.data.DuplicateReportFormat
 import com.zynerio.bibliotecajelly.data.SyncResult
 import com.zynerio.bibliotecajelly.data.SyncScope
 import com.zynerio.bibliotecajelly.data.SyncProgressPhase
@@ -52,6 +53,12 @@ enum class TechnicalFilterType {
     Resolution
 }
 
+enum class DuplicateMatchMode {
+    Flexible,
+    Balanced,
+    Strict
+}
+
 data class ConfigUiState(
     val serverAddress: String = "",
     val port: String = "8096",
@@ -59,14 +66,21 @@ data class ConfigUiState(
     val password: String = "",
     val apiKey: String = "",
     val isValidating: Boolean = false,
+    val isExportingReport: Boolean = false,
     val validationError: String? = null,
     val hasSavedConfig: Boolean = false,
     val isConfigured: Boolean = false,
     val databaseSizeText: String = "",
+    val databaseUsagePercent: Float? = null,
     val postersSizeText: String = "",
+    val postersUsagePercent: Float? = null,
     val downloadPostersOffline: Boolean = false,
     val showFilePath: Boolean = false,
     val librariesAdvancedView: Boolean = false,
+    val reconcileDeletedOnRecentSync: Boolean = false,
+    val reportMovieDuplicateMatchMode: DuplicateMatchMode = DuplicateMatchMode.Strict,
+    val reportSeriesDuplicateMatchMode: DuplicateMatchMode = DuplicateMatchMode.Strict,
+    val connectedServerVersion: String? = null,
     val autoSyncMode: AutoSyncMode = AutoSyncMode.OnStart,
     val movieDetailsSyncMode: MovieDetailsSyncMode = MovieDetailsSyncMode.All,
     val listDisplayMode: ListDisplayMode = ListDisplayMode.Infinite
@@ -94,6 +108,8 @@ data class LibraryUiState(
     val showOnlySeriesFavorites: Boolean = false,
     val showOnlyMovieDuplicates: Boolean = false,
     val showOnlySeriesDuplicates: Boolean = false,
+    val movieDuplicateMatchMode: DuplicateMatchMode = DuplicateMatchMode.Strict,
+    val seriesDuplicateMatchMode: DuplicateMatchMode = DuplicateMatchMode.Strict,
     val selectedMovieGenres: Set<String> = emptySet(),
     val selectedSeriesGenres: Set<String> = emptySet(),
     val selectedMovieTechnicalFilters: Map<TechnicalFilterType, Set<String>> = emptyMap(),
@@ -117,6 +133,25 @@ data class UpdateUiState(
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class MainViewModel(application: Application) : AndroidViewModel(application) {
+
+    private data class ConfigDraftSnapshot(
+        val serverAddress: String,
+        val port: String,
+        val username: String,
+        val password: String,
+        val apiKey: String,
+        val hasSavedConfig: Boolean,
+        val downloadPostersOffline: Boolean,
+        val showFilePath: Boolean,
+        val librariesAdvancedView: Boolean,
+        val reconcileDeletedOnRecentSync: Boolean,
+        val reportMovieDuplicateMatchMode: DuplicateMatchMode,
+        val reportSeriesDuplicateMatchMode: DuplicateMatchMode,
+        val connectedServerVersion: String?,
+        val autoSyncMode: AutoSyncMode,
+        val movieDetailsSyncMode: MovieDetailsSyncMode,
+        val listDisplayMode: ListDisplayMode
+    )
 
     private val repository: JellyfinRepository =
         ServiceLocator.provideRepository(application)
@@ -201,6 +236,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
 
     private var currentSyncJob: Job? = null
+    private var committedConfigSnapshot = snapshotFromConfig(_uiState.value.config)
+    private var configEntrySyncSnapshot: SyncUiState? = null
     private val partialSyncWarning =
         application.getString(R.string.warning_partial_sync)
     private val installedVersionName: String by lazy {
@@ -210,6 +247,58 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 .getPackageInfo(getApplication<Application>().packageName, 0)
                 .versionName
         }.getOrNull().orEmpty().ifBlank { "0.0" }
+    }
+
+    private fun snapshotFromConfig(config: ConfigUiState): ConfigDraftSnapshot = ConfigDraftSnapshot(
+        serverAddress = config.serverAddress,
+        port = config.port,
+        username = config.username,
+        password = config.password,
+        apiKey = config.apiKey,
+        hasSavedConfig = config.hasSavedConfig,
+        downloadPostersOffline = config.downloadPostersOffline,
+        showFilePath = config.showFilePath,
+        librariesAdvancedView = config.librariesAdvancedView,
+        reconcileDeletedOnRecentSync = config.reconcileDeletedOnRecentSync,
+        reportMovieDuplicateMatchMode = config.reportMovieDuplicateMatchMode,
+        reportSeriesDuplicateMatchMode = config.reportSeriesDuplicateMatchMode,
+        connectedServerVersion = config.connectedServerVersion,
+        autoSyncMode = config.autoSyncMode,
+        movieDetailsSyncMode = config.movieDetailsSyncMode,
+        listDisplayMode = config.listDisplayMode
+    )
+
+    private fun commitConfigSnapshot(config: ConfigUiState = _uiState.value.config) {
+        committedConfigSnapshot = snapshotFromConfig(config)
+    }
+
+    private fun restoreCommittedConfig(isConfigured: Boolean) {
+        val snapshot = committedConfigSnapshot
+        val current = _uiState.value.config
+        _uiState.value = _uiState.value.copy(
+            config = current.copy(
+                serverAddress = snapshot.serverAddress,
+                port = snapshot.port,
+                username = snapshot.username,
+                password = snapshot.password,
+                apiKey = snapshot.apiKey,
+                isValidating = false,
+                isExportingReport = false,
+                validationError = null,
+                hasSavedConfig = snapshot.hasSavedConfig,
+                isConfigured = isConfigured,
+                downloadPostersOffline = snapshot.downloadPostersOffline,
+                showFilePath = snapshot.showFilePath,
+                librariesAdvancedView = snapshot.librariesAdvancedView,
+                reconcileDeletedOnRecentSync = snapshot.reconcileDeletedOnRecentSync,
+                reportMovieDuplicateMatchMode = snapshot.reportMovieDuplicateMatchMode,
+                reportSeriesDuplicateMatchMode = snapshot.reportSeriesDuplicateMatchMode,
+                connectedServerVersion = snapshot.connectedServerVersion,
+                autoSyncMode = snapshot.autoSyncMode,
+                movieDetailsSyncMode = snapshot.movieDetailsSyncMode,
+                listDisplayMode = snapshot.listDisplayMode
+            )
+        )
     }
 
     init {
@@ -222,6 +311,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val offlinePostersEnabled = repository.getOfflinePostersEnabled()
             val showFilePath = repository.getShowFilePath()
             val librariesAdvancedView = repository.getLibrariesAdvancedView()
+            val reconcileDeletedOnRecentSync = repository.getReconcileDeletedOnRecentSync()
             _libraryCoverOverrides.value = repository.getLibraryCoverOverrides()
             _showLibraryCoverHint.value = !repository.isLibraryCoverHintDismissed()
             val movieSortMode = repository.getMovieSortMode()
@@ -254,6 +344,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         downloadPostersOffline = offlinePostersEnabled,
                         showFilePath = showFilePath,
                         librariesAdvancedView = librariesAdvancedView,
+                        reconcileDeletedOnRecentSync = reconcileDeletedOnRecentSync,
                         autoSyncMode = autoSyncMode,
                         movieDetailsSyncMode = movieDetailsSyncMode,
                         listDisplayMode = listDisplayMode
@@ -269,6 +360,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 )
 
+                commitConfigSnapshot(_uiState.value.config)
+                configEntrySyncSnapshot = _uiState.value.sync.copy()
+
                 updateServerStatus()
                 loadLibraryViews()
 
@@ -281,6 +375,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         downloadPostersOffline = offlinePostersEnabled,
                         showFilePath = showFilePath,
                         librariesAdvancedView = librariesAdvancedView,
+                        reconcileDeletedOnRecentSync = reconcileDeletedOnRecentSync,
                         autoSyncMode = autoSyncMode,
                         movieDetailsSyncMode = movieDetailsSyncMode,
                         listDisplayMode = listDisplayMode
@@ -291,6 +386,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         seriesSortMode = seriesSortMode
                     )
                 )
+                commitConfigSnapshot(_uiState.value.config)
+                configEntrySyncSnapshot = _uiState.value.sync.copy()
             }
 
             refreshDatabaseSize()
@@ -341,13 +438,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun onServerAddressChanged(value: String) {
         _uiState.value = _uiState.value.copy(
-            config = _uiState.value.config.copy(serverAddress = value)
+            config = _uiState.value.config.copy(
+                serverAddress = value,
+                connectedServerVersion = null
+            )
         )
     }
 
     fun onPortChanged(value: String) {
         _uiState.value = _uiState.value.copy(
-            config = _uiState.value.config.copy(port = value)
+            config = _uiState.value.config.copy(
+                port = value,
+                connectedServerVersion = null
+            )
         )
     }
 
@@ -402,6 +505,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun onLibrariesAdvancedViewChanged(enabled: Boolean) {
         _uiState.value = _uiState.value.copy(
             config = _uiState.value.config.copy(librariesAdvancedView = enabled)
+        )
+    }
+
+    fun onReconcileDeletedOnRecentSyncChanged(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(
+            config = _uiState.value.config.copy(reconcileDeletedOnRecentSync = enabled)
+        )
+    }
+
+    fun onReportMovieDuplicateMatchModeChanged(mode: DuplicateMatchMode) {
+        _uiState.value = _uiState.value.copy(
+            config = _uiState.value.config.copy(reportMovieDuplicateMatchMode = mode)
+        )
+    }
+
+    fun onReportSeriesDuplicateMatchModeChanged(mode: DuplicateMatchMode) {
+        _uiState.value = _uiState.value.copy(
+            config = _uiState.value.config.copy(reportSeriesDuplicateMatchMode = mode)
         )
     }
 
@@ -594,6 +715,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    fun onDuplicateMatchModeSelected(mode: DuplicateMatchMode) {
+        val library = _uiState.value.library
+        _uiState.value = _uiState.value.copy(
+            library = when (library.selectedTab) {
+                LibraryTab.Movies -> library.copy(movieDuplicateMatchMode = mode)
+                LibraryTab.Series -> library.copy(seriesDuplicateMatchMode = mode)
+                LibraryTab.Others -> library
+            }
+        )
+    }
+
     fun onMovieFavoriteToggled(movieId: String, isFavorite: Boolean) {
         viewModelScope.launch {
             repository.setMovieFavorite(movieId, isFavorite)
@@ -697,22 +829,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openConfigScreen() {
-        _uiState.value = _uiState.value.copy(
-            config = _uiState.value.config.copy(isConfigured = false)
-        )
+        configEntrySyncSnapshot = _uiState.value.sync.copy()
+        restoreCommittedConfig(isConfigured = false)
         viewModelScope.launch {
             refreshDatabaseSize()
         }
     }
 
     fun cancelConfigChanges() {
-        _uiState.value = _uiState.value.copy(
-            config = _uiState.value.config.copy(
-                isValidating = false,
-                validationError = null,
-                isConfigured = true
-            )
-        )
+        restoreCommittedConfig(isConfigured = true)
+        configEntrySyncSnapshot?.let { previousSync ->
+            _uiState.value = _uiState.value.copy(sync = previousSync)
+        }
     }
 
     fun clearLocalData(scope: ClearDataScope) {
@@ -734,6 +862,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.value = _uiState.value.copy(
                 sync = _uiState.value.sync.copy(syncHistory = emptyList())
             )
+        }
+    }
+
+    fun exportDuplicateReport(
+        format: DuplicateReportFormat,
+        movieMode: DuplicateMatchMode,
+        seriesMode: DuplicateMatchMode,
+        onResult: (Boolean, String, File?) -> Unit
+    ) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                config = _uiState.value.config.copy(isExportingReport = true)
+            )
+
+            val library = _uiState.value.library
+            val exported = repository.exportDuplicateReport(
+                format = format,
+                movieModeName = movieMode.name,
+                seriesModeName = seriesMode.name
+            )
+
+            _uiState.value = _uiState.value.copy(
+                config = _uiState.value.config.copy(isExportingReport = false)
+            )
+
+            if (exported != null) {
+                onResult(
+                    true,
+                    getApplication<Application>().getString(
+                        R.string.duplicate_report_export_success,
+                        exported.absolutePath
+                    ),
+                    exported
+                )
+            } else {
+                onResult(
+                    false,
+                    getApplication<Application>().getString(R.string.duplicate_report_export_error),
+                    null
+                )
+            }
         }
     }
 
@@ -776,6 +945,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             repository.setOfflinePostersEnabled(state.downloadPostersOffline)
             repository.setShowFilePath(state.showFilePath)
             repository.setLibrariesAdvancedView(state.librariesAdvancedView)
+            repository.setReconcileDeletedOnRecentSync(state.reconcileDeletedOnRecentSync)
 
             _uiState.value = _uiState.value.copy(
                 config = _uiState.value.config.copy(
@@ -792,7 +962,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             when (status) {
                 ConnectionResult.Success -> {
+                    val version = withTimeoutOrNull(8_000L) {
+                        repository.getServerVersion()
+                    }
                     _uiState.value = _uiState.value.copy(
+                        config = _uiState.value.config.copy(
+                            connectedServerVersion = version
+                                ?: getApplication<Application>().getString(R.string.server_version_unknown)
+                        ),
                         sync = _uiState.value.sync.copy(
                             serverStatusText = getApplication<Application>().getString(R.string.server_active),
                             isServerActive = true,
@@ -842,6 +1019,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 is ConnectionResult.NetworkError -> {
                     _uiState.value = _uiState.value.copy(
+                        config = _uiState.value.config.copy(connectedServerVersion = null),
                         sync = _uiState.value.sync.copy(
                             serverStatusText = getApplication<Application>().getString(R.string.server_inactive),
                             isServerActive = false,
@@ -852,6 +1030,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 is ConnectionResult.AuthFailure -> {
                     _uiState.value = _uiState.value.copy(
+                        config = _uiState.value.config.copy(connectedServerVersion = null),
                         sync = _uiState.value.sync.copy(
                             serverStatusText = getApplication<Application>().getString(R.string.server_config_incomplete),
                             isServerActive = false,
@@ -862,6 +1041,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 is ConnectionResult.UnknownError -> {
                     _uiState.value = _uiState.value.copy(
+                        config = _uiState.value.config.copy(connectedServerVersion = null),
                         sync = _uiState.value.sync.copy(
                             serverStatusText = getApplication<Application>().getString(R.string.server_unknown_state),
                             isServerActive = false,
@@ -870,6 +1050,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             }
+
+            commitConfigSnapshot(_uiState.value.config)
+            configEntrySyncSnapshot = _uiState.value.sync.copy()
         }
     }
 
@@ -963,6 +1146,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     forceFullMovies = forceFullMovies,
                     forceFullSeries = forceFullSeries,
                     forceFullOthers = forceFullOthers,
+                    reconcileDeletedOnRecent = onlyRecentAdded && _uiState.value.config.reconcileDeletedOnRecentSync,
                     modeLabel = if (onlyRecentAdded) {
                         getApplication<Application>().getString(R.string.mode_recently_added)
                     } else {
@@ -1239,56 +1423,130 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun testConnection(onResult: (Boolean, String) -> Unit) {
         viewModelScope.launch {
-            val config = _uiState.value.config
-            when (val status = withTimeoutOrNull(12_000L) {
-                repository.checkServerStatus(
-                    serverAddress = config.serverAddress,
-                    port = config.port
+            _uiState.value = _uiState.value.copy(
+                config = _uiState.value.config.copy(
+                    isValidating = true,
+                    validationError = null
                 )
-            } ?: ConnectionResult.NetworkError(getApplication<Application>().getString(R.string.timeout_validating_server))) {
-                ConnectionResult.Success -> {
-                    _uiState.value = _uiState.value.copy(
-                        sync = _uiState.value.sync.copy(
-                            serverStatusText = getApplication<Application>().getString(R.string.server_active),
-                            isServerActive = true,
-                            lastError = null
-                        )
-                    )
-                    onResult(true, getApplication<Application>().getString(R.string.test_connection_success))
-                }
+            )
 
-                is ConnectionResult.NetworkError -> {
-                    _uiState.value = _uiState.value.copy(
-                        sync = _uiState.value.sync.copy(
-                            serverStatusText = getApplication<Application>().getString(R.string.server_inactive),
-                            isServerActive = false,
-                            lastError = status.message
-                        )
+            val config = _uiState.value.config
+            try {
+                when (val status = withTimeoutOrNull(12_000L) {
+                    repository.checkServerStatus(
+                        serverAddress = config.serverAddress,
+                        port = config.port
                     )
-                    onResult(false, status.message)
-                }
+                } ?: ConnectionResult.NetworkError(getApplication<Application>().getString(R.string.timeout_validating_server))) {
+                    ConnectionResult.Success -> {
+                        when (val auth = withTimeoutOrNull(15_000L) {
+                            repository.authenticateAndValidateConnection(
+                                serverAddress = config.serverAddress,
+                                port = config.port,
+                                username = config.username.ifBlank { null },
+                                password = config.password.ifBlank { null },
+                                apiKey = config.apiKey.ifBlank { null }
+                            )
+                        } ?: ConnectionResult.NetworkError(getApplication<Application>().getString(R.string.timeout_validating_credentials))) {
+                            ConnectionResult.Success -> {
+                                val version = withTimeoutOrNull(8_000L) {
+                                    repository.getServerVersion(
+                                        serverAddress = config.serverAddress,
+                                        port = config.port
+                                    )
+                                }
+                                _uiState.value = _uiState.value.copy(
+                                    config = _uiState.value.config.copy(
+                                        connectedServerVersion = version
+                                            ?: getApplication<Application>().getString(R.string.server_version_unknown)
+                                    ),
+                                    sync = _uiState.value.sync.copy(
+                                        serverStatusText = getApplication<Application>().getString(R.string.server_active),
+                                        isServerActive = true,
+                                        lastError = null
+                                    )
+                                )
+                                onResult(true, getApplication<Application>().getString(R.string.test_connection_success))
+                            }
 
-                is ConnectionResult.AuthFailure -> {
-                    _uiState.value = _uiState.value.copy(
-                        sync = _uiState.value.sync.copy(
-                            serverStatusText = getApplication<Application>().getString(R.string.server_config_incomplete),
-                            isServerActive = false,
-                            lastError = status.message
-                        )
-                    )
-                    onResult(false, status.message)
-                }
+                            is ConnectionResult.AuthFailure -> {
+                                _uiState.value = _uiState.value.copy(
+                                    config = _uiState.value.config.copy(connectedServerVersion = null),
+                                    sync = _uiState.value.sync.copy(
+                                        serverStatusText = getApplication<Application>().getString(R.string.server_active_unauth),
+                                        isServerActive = true,
+                                        lastError = auth.message
+                                    )
+                                )
+                                onResult(false, auth.message)
+                            }
 
-                is ConnectionResult.UnknownError -> {
-                    _uiState.value = _uiState.value.copy(
-                        sync = _uiState.value.sync.copy(
-                            serverStatusText = getApplication<Application>().getString(R.string.server_unknown_state),
-                            isServerActive = false,
-                            lastError = status.message
+                            is ConnectionResult.NetworkError -> {
+                                _uiState.value = _uiState.value.copy(
+                                    config = _uiState.value.config.copy(connectedServerVersion = null),
+                                    sync = _uiState.value.sync.copy(
+                                        serverStatusText = getApplication<Application>().getString(R.string.server_active_unauth),
+                                        isServerActive = true,
+                                        lastError = auth.message
+                                    )
+                                )
+                                onResult(false, auth.message)
+                            }
+
+                            is ConnectionResult.UnknownError -> {
+                                _uiState.value = _uiState.value.copy(
+                                    config = _uiState.value.config.copy(connectedServerVersion = null),
+                                    sync = _uiState.value.sync.copy(
+                                        serverStatusText = getApplication<Application>().getString(R.string.server_unknown_state),
+                                        isServerActive = false,
+                                        lastError = auth.message
+                                    )
+                                )
+                                onResult(false, auth.message)
+                            }
+                        }
+                    }
+
+                    is ConnectionResult.NetworkError -> {
+                        _uiState.value = _uiState.value.copy(
+                            config = _uiState.value.config.copy(connectedServerVersion = null),
+                            sync = _uiState.value.sync.copy(
+                                serverStatusText = getApplication<Application>().getString(R.string.server_inactive),
+                                isServerActive = false,
+                                lastError = status.message
+                            )
                         )
-                    )
-                    onResult(false, status.message)
+                        onResult(false, status.message)
+                    }
+
+                    is ConnectionResult.AuthFailure -> {
+                        _uiState.value = _uiState.value.copy(
+                            config = _uiState.value.config.copy(connectedServerVersion = null),
+                            sync = _uiState.value.sync.copy(
+                                serverStatusText = getApplication<Application>().getString(R.string.server_config_incomplete),
+                                isServerActive = false,
+                                lastError = status.message
+                            )
+                        )
+                        onResult(false, status.message)
+                    }
+
+                    is ConnectionResult.UnknownError -> {
+                        _uiState.value = _uiState.value.copy(
+                            config = _uiState.value.config.copy(connectedServerVersion = null),
+                            sync = _uiState.value.sync.copy(
+                                serverStatusText = getApplication<Application>().getString(R.string.server_unknown_state),
+                                isServerActive = false,
+                                lastError = status.message
+                            )
+                        )
+                        onResult(false, status.message)
+                    }
                 }
+            } finally {
+                _uiState.value = _uiState.value.copy(
+                    config = _uiState.value.config.copy(isValidating = false)
+                )
             }
         }
     }
@@ -1331,9 +1589,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .sumOf { it.length() }
 
         val freeBytes = app.filesDir.usableSpace
-        val ratioText = if (freeBytes > 0L) {
-            val percent = (totalBytes.toDouble() / freeBytes.toDouble()) * 100.0
-            String.format(getApplication<Application>().getString(R.string.free_space_ratio), percent)
+        val usagePercent = if (freeBytes > 0L) {
+            ((totalBytes.toDouble() / freeBytes.toDouble()) * 100.0).toFloat()
+        } else {
+            null
+        }
+
+        val ratioText = if (usagePercent != null) {
+            String.format(getApplication<Application>().getString(R.string.free_space_ratio), usagePercent.toDouble())
         } else {
             ""
         }
@@ -1346,6 +1609,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         val postersCount = posterFiles.size
         val postersBytes = posterFiles.sumOf { it.length() }
+        val postersUsagePercent = if (freeBytes > 0L) {
+            ((postersBytes.toDouble() / freeBytes.toDouble()) * 100.0).toFloat()
+        } else {
+            null
+        }
 
         _uiState.value = _uiState.value.copy(
             config = _uiState.value.config.copy(
@@ -1354,11 +1622,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     formatBytes(totalBytes),
                     ratioText
                 ),
+                databaseUsagePercent = usagePercent,
                 postersSizeText = getApplication<Application>().getString(
                     R.string.posters_size_text,
                     postersCount,
                     formatBytes(postersBytes)
-                )
+                ),
+                postersUsagePercent = postersUsagePercent
             )
         )
     }
@@ -1428,7 +1698,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun updateServerStatus() {
         when (repository.checkServerStatus()) {
             ConnectionResult.Success -> {
+                val version = withTimeoutOrNull(8_000L) {
+                    repository.getServerVersion()
+                }
                 _uiState.value = _uiState.value.copy(
+                    config = _uiState.value.config.copy(
+                        connectedServerVersion = version
+                            ?: getApplication<Application>().getString(R.string.server_version_unknown)
+                    ),
                     sync = _uiState.value.sync.copy(
                         serverStatusText = getApplication<Application>().getString(R.string.server_active),
                         isServerActive = true
@@ -1438,6 +1715,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             else -> {
                 _uiState.value = _uiState.value.copy(
+                    config = _uiState.value.config.copy(connectedServerVersion = null),
                     sync = _uiState.value.sync.copy(
                         serverStatusText = getApplication<Application>().getString(R.string.server_inactive),
                         isServerActive = false
