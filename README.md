@@ -4,9 +4,28 @@ Aplicación Android nativa desarrollada en Kotlin/Jetpack Compose que actúa com
 para un servidor Jellyfin. 
 Importa los metadatos de películas y series, los almacena en una base de datos local y permite consultarlos sin conexión.
 
-![cap7](https://github.com/user-attachments/assets/09aa9e4a-3b74-41be-8533-da88a781edb0)
+![cap8](https://github.com/user-attachments/assets/8bc53a33-6198-4efa-946c-b9b7aea6932f)
+
 
 ## Changelog interno
+
+### v2.4 (release pública)
+
+- Filtro de duplicados ampliado en Películas y Series con modos de coincidencia **Flexible**, **Equilibrado** y **Estricto**.
+- Corrección visual del filtro de duplicados en móvil vertical para que los chips sigan siendo accesibles.
+- Configuración de servidor mejorada:
+  - al probar conexión se muestra la versión del servidor Jellyfin conectado,
+  - la comprobación usa los datos actuales del formulario.
+- Sincronización de `Últimos añadidos` reforzada con opción para reconciliar eliminados del servidor sin lanzar una sincronización completa.
+- Reconciliación ligera de eliminados para películas, series y otros por biblioteca durante sincronización incremental cuando la opción está activa.
+- Migración automática de favoritos cuando Jellyfin reindexa un elemento movido y genera un ID nuevo equivalente.
+- Nuevo informe de duplicados en la pestaña **Datos**:
+  - exportación en TXT y CSV,
+  - compartir TXT o CSV,
+  - elección manual de ubicación de guardado,
+  - inclusión de rutas de archivo y resumen global,
+  - modos de coincidencia independientes para el informe de películas y series.
+- Versión de aplicación actualizada a `2.4` (`versionCode = 11`).
 
 ### v2.3 (release pública)
 
@@ -172,33 +191,7 @@ Importa los metadatos de películas y series, los almacena en una base de datos 
 - Botonera de sincronización de **Otros** (normal / rápida / últimos añadidos).
 - Corrección de "Marcar vistas" en modo clásico.
 - Reconciliación de eliminados para `other_media` en sincronización completa.
-
-## Checklist QA final (v2.1)
-
-1. Configuración y conexión
-  - Guardar configuración con servidor válido y comprobar estado activo.
-  - Probar conexión con credenciales válidas e inválidas.
-2. Sincronización por alcance
-  - Ejecutar `Todo`, `Películas`, `Series` y `Otros` en modo normal.
-  - Ejecutar `Todo`, `Películas`, `Series` y `Otros` en modo rápida.
-  - Ejecutar `Películas`, `Series` y `Otros` en `Últimos añadidos`.
-3. Contenido Otros
-  - Ver pestaña `Otros` con tarjetas por tipo (Videos/Imágenes).
-  - Abrir modal de tipo, buscar por título y alternar orden `A-Z` / `Últimos añadidos`.
-  - Aplicar filtro por biblioteca dentro de `Otros` y validar conteos.
-4. Novedades
-  - Ver contador de novedades por pestaña.
-  - Pulsar `Marcar vistas` y validar limpieza inmediata del contador.
-5. Modo avanzado
-  - Abrir bibliotecas, cambiar portadas manual/automático y comprobar persistencia.
-  - Verificar cambio correcto entre tabs de contenido dentro de una biblioteca.
-6. Integridad local
-  - Borrar datos sincronizados por alcance y validar limpieza.
-  - Ejecutar sync completa de `Otros` y validar reconciliación de eliminados.
-7. Regresión visual
-  - Revisar layout en móvil (portrait/landscape) y en tablet si disponible.
-  - Confirmar textos ES/EN sin claves faltantes.
-    
+   
 <img width="878" height="543" alt="cap6" src="https://github.com/user-attachments/assets/a4fbd26b-a6c4-46ba-a38a-d833a33a3016" />
 
 
