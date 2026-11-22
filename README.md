@@ -1,6 +1,7 @@
 # BibliotecaJelly
 
-<img src="shared/branding/BJelly.png" alt="BibliotecaJelly" width="96">
+<p align="center"><img width="256" height="256" alt="BJelly-favicon" src="https://github.com/user-attachments/assets/87dafa6e-df0c-499f-96c9-520a5558ba3c" /></p>
+
 
 Catálogo offline para Jellyfin. Este repositorio es el **hub público** de descargas y actualizaciones; el código fuente no se publica aquí.
 
