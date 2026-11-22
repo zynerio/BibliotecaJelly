@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "product": "android",
+  "channel": "stable",
+  "version": "2.4.0",
+  "tag": "v2.4.0",
+  "publishedAt": "2026-11-22T10:00:00Z",
+  "notesUrl": "https://github.com/zynerio/BibliotecaJelly-android/releases/tag/v2.4.0",
+  "downloads": {
+    "android-apk": {
+      "url": "https://github.com/zynerio/BibliotecaJelly-android/releases/download/v2.4.0/BibliotecaJelly-2.4.0.apk",
+      "sha256": ""
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "product": "desktop",
+  "channel": "stable",
+  "version": "0.1.0",
+  "tag": "v0.1.0",
+  "publishedAt": "2026-11-22T10:00:00Z",
+  "notesUrl": "https://github.com/zynerio/BibliotecaJelly-desktop/releases/tag/v0.1.0",
+  "downloads": {
+    "windows-x86_64": {
+      "url": "https://github.com/zynerio/BibliotecaJelly-desktop/releases/download/v0.1.0/BibliotecaJelly_0.1.0_x64-setup.exe",
+      "sha256": "61ddb510b813b442f1ce9da2b02344c68362761a1eab95a52723af643dbdfaef"
+    },
+    "windows-x86_64-msi": {
+      "url": "https://github.com/zynerio/BibliotecaJelly-desktop/releases/download/v0.1.0/BibliotecaJelly_0.1.0_x64_en-US.msi",
+      "sha256": "7080e382ca64faf23aeca927d5a3ee9673df5fcd59d6d6294f83f3a0428353af"
+    },
+    "linux-x86_64": {
+      "url": "",
+      "sha256": ""
+    }
+  }
+}

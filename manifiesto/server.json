@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "product": "server",
+  "channel": "stable",
+  "version": "1.4.0",
+  "tag": "v1.4.0",
+  "publishedAt": "2026-11-22T10:00:00Z",
+  "notesUrl": "https://github.com/zynerio/BibliotecaJelly-server/releases/tag/v1.4.0",
+  "downloads": {
+    "server-php-zip": {
+      "url": "https://github.com/zynerio/BibliotecaJelly-server/releases/download/v1.4.0/BibliotecaJelly-server-1.4.0.zip",
+      "sha256": ""
+    }
+  }
+}
