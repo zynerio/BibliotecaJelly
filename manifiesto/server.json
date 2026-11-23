@@ -2,14 +2,16 @@
   "schemaVersion": 1,
   "product": "server",
   "channel": "stable",
-  "version": "1.4.0",
-  "tag": "v1.4.0",
-  "publishedAt": "2026-11-22T10:00:00Z",
-  "notesUrl": "https://github.com/zynerio/BibliotecaJelly-server/releases/tag/v1.4.0",
+  "version": "1.5.0",
+  "tag": "v1.5.0",
+  "publishedAt": "2026-11-23T10:00:00Z",
+  "notesUrl": "https://github.com/zynerio/BibliotecaJelly-server/releases/tag/v1.5.0",
   "downloads": {
     "server-php-zip": {
-      "url": "https://github.com/zynerio/BibliotecaJelly-server/releases/download/v1.4.0/BibliotecaJelly-server-1.4.0.zip",
-      "sha256": ""
+      "url": "https://github.com/zynerio/BibliotecaJelly-server/releases/download/v1.5.0/BibliotecaJelly-server-1.5.0.zip",
+      "sha256": "fa43e2ff2e48d0b17acf393af172f687bf274bb12985575fa3e27db2a1f99a53"
     }
-  }
+  },
+  "downloadUrl": "https://github.com/zynerio/BibliotecaJelly-server/releases/download/v1.5.0/BibliotecaJelly-server-1.5.0.zip",
+  "sha256": "fa43e2ff2e48d0b17acf393af172f687bf274bb12985575fa3e27db2a1f99a53"
 }
